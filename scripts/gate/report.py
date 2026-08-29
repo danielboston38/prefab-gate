@@ -32,8 +32,11 @@ def render_text(verdict) -> str:
         out.append(f"PASSED — nothing blocking. {len(verdict.cosmetic)} cosmetic "
                    f"finding(s) waved through.")
     else:
+        # "No package was produced", not "no files": DRC runs with
+        # --refill-zones --save-board, so the board file itself may already
+        # have been rewritten — and a line above may have just said so.
         out.append(f"BLOCKED — {len(verdict.blocking)} blocking finding(s). "
-                   "No files were produced.")
+                   "No package was produced.")
         out.append("")
         out.append("Blocking:")
         out.extend(_line(f) for f in verdict.blocking)

@@ -11,6 +11,12 @@ def f(blocking, description="Courtyards overlap", items=("Footprint TP1", "Footp
 
 
 class TestRenderText(unittest.TestCase):
+    def test_blocked_report_does_not_claim_no_files_were_written(self):
+        """A refill may have rewritten the board a line earlier."""
+        text = render_text(Verdict(blocking=[f(True)], cosmetic=[]))
+        self.assertIn("No package was produced.", text)
+        self.assertNotIn("No files were produced", text)
+
     def test_blocked_report_names_the_blocking_finding_and_its_items(self):
         text = render_text(Verdict(blocking=[f(True)], cosmetic=[]))
         self.assertIn("BLOCKED", text)

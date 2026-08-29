@@ -1,7 +1,10 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
+import gate.export
 from gate.export import export_package, schematic_for
+from gate.kicad import KicadUnavailable
 
 
 class TestSchematicFor(unittest.TestCase):
@@ -58,3 +61,24 @@ class TestExport(unittest.TestCase):
         with self.assertRaises(Exception):
             export_package("kicad-cli", self.board, out, runner=self.runner(fail_on="drill"))
         self.assertEqual([] if not os.path.isdir(out) else os.listdir(out), [])
+
+    def test_a_pre_existing_final_path_raises_a_comprehensible_error(self):
+        out = os.path.join(self.tmp.name, "fab")
+        os.makedirs(out, exist_ok=True)
+        fixed_stamp = "2026-01-01-00-00-00"
+        os.makedirs(os.path.join(out, fixed_stamp))
+        with open(os.path.join(out, fixed_stamp, "gerbers"), "w") as fh:
+            fh.write("existing package from a prior run")
+
+        class FixedDatetime(gate.export.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return gate.export.datetime(2026, 1, 1, 0, 0, 0)
+
+        with mock.patch.object(gate.export, "datetime", FixedDatetime):
+            with self.assertRaises(KicadUnavailable) as ctx:
+                export_package("kicad-cli", self.board, out, runner=self.runner())
+
+        self.assertIn(os.path.join(out, fixed_stamp), str(ctx.exception))
+        staging_dirs = [d for d in os.listdir(out) if d.startswith(".staging-")]
+        self.assertEqual(staging_dirs, [])

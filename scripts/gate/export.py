@@ -42,7 +42,13 @@ def export_package(cli: str, board: str, out_dir: str, runner=subprocess.run) ->
         _run(runner, [cli, "sch", "export", "bom", "--group-by", "",
                       "--fields", "Reference,Value,Footprint,Manufacturer,MPN,LCSC,Datasheet",
                       "-o", os.path.join(staging, "bom.csv"), schematic_for(board)])
-        os.replace(staging, final)
+        try:
+            os.replace(staging, final)
+        except OSError as exc:
+            raise KicadUnavailable(
+                f"cannot publish the package to {final}: {exc.strerror or exc}. "
+                "A package from the same second already exists there — wait a moment "
+                "and run again.") from exc
         return final
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

@@ -11,9 +11,9 @@ from gate.model import Finding, Verdict
 BLOCKING_PARITY = (
     "doesn't match footprint given by symbol",
     "'Do not populate' settings differ",
-    "not found in schematic",
-    "not found on PCB",
-    "net mismatch",
+    "Missing footprint",
+    "not in schematic",
+    "doesn't match net given by schematic",
 )
 COSMETIC_PARITY = (
     "Missing symbol field",

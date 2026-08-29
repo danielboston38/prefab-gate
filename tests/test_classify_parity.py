@@ -42,3 +42,18 @@ class TestClassifyParity(unittest.TestCase):
     def test_unrecognised_description_names_the_string_it_did_not_match(self):
         v = classify(drc([parity("Some future KiCad wording nobody has seen")]))
         self.assertIn("Some future KiCad wording nobody has seen", v.blocking[0].reason)
+
+    def test_missing_footprint_blocks(self):
+        v = classify(drc([parity("Missing footprint R5 (Resistor_SMD:R_0805)",
+                                 "footprint_missing")]))
+        self.assertEqual(len(v.blocking), 1)
+
+    def test_extra_footprint_not_in_schematic_blocks(self):
+        v = classify(drc([parity("Footprint J2 not in schematic",
+                                 "footprint_missing")]))
+        self.assertEqual(len(v.blocking), 1)
+
+    def test_net_mismatch_blocks(self):
+        v = classify(drc([parity(
+            "Pad net (GND) doesn't match net given by schematic (/AUDIO_OUT)")]))
+        self.assertEqual(len(v.blocking), 1)

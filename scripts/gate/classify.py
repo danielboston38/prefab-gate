@@ -5,6 +5,21 @@ without KiCad installed.
 """
 from gate.model import Finding, Verdict
 
+# Parity descriptions are matched by substring because kicad-cli's `type` field
+# is too coarse: footprint_symbol_mismatch covers both a genuine footprint
+# mismatch and a trivial exclude-from-BOM difference.
+BLOCKING_PARITY = (
+    "doesn't match footprint given by symbol",
+    "'Do not populate' settings differ",
+    "not found in schematic",
+    "not found on PCB",
+    "net mismatch",
+)
+COSMETIC_PARITY = (
+    "Missing symbol field",
+    "'Exclude from bill of materials' settings differ",
+)
+
 
 def _items(entry):
     return tuple(i.get("description", "") for i in entry.get("items", []))
@@ -36,5 +51,19 @@ def classify(drc: dict, strict: bool = False) -> Verdict:
                       description=u.get("description", ""), severity="error",
                       items=_items(u), blocking=True,
                       reason="unconnected items always block"))
+
+    for p in drc.get("schematic_parity", []):
+        description = p.get("description", "")
+        if any(s in description for s in BLOCKING_PARITY):
+            blocking, reason = True, "structural parity mismatch"
+        elif any(s in description for s in COSMETIC_PARITY):
+            blocking, reason = False, "metadata-only parity mismatch"
+        else:
+            blocking = True
+            reason = ("unrecognised parity description, blocking by default: "
+                      f"{description!r}")
+        place(Finding(kind="parity", type=p.get("type", ""), description=description,
+                      severity=p.get("severity", "warning"), items=_items(p),
+                      blocking=blocking, reason=reason))
 
     return verdict

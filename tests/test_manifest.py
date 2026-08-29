@@ -35,3 +35,13 @@ class TestManifest(unittest.TestCase):
     def test_manifest_checksums_each_exported_file(self):
         m = build_manifest(self.board, "10.0.5", Verdict(), [self.board])
         self.assertEqual(m["files"][0]["sha256"], sha256(self.board))
+
+    def test_manifest_records_file_paths_relative_to_package_root(self):
+        gerber_dir = os.path.join(self.tmp.name, "gerbers")
+        os.makedirs(gerber_dir)
+        gerber = os.path.join(gerber_dir, "x.gbr")
+        with open(gerber, "w") as fh:
+            fh.write("x")
+        m = build_manifest(self.board, "10.0.5", Verdict(), [gerber],
+                            package_root=self.tmp.name)
+        self.assertEqual(m["files"][0]["name"], os.path.join("gerbers", "x.gbr"))

@@ -11,11 +11,9 @@ import subprocess
 import tempfile
 from datetime import datetime
 
-from gate.kicad import KicadUnavailable
-
-
-def schematic_for(board: str) -> str:
-    return os.path.splitext(board)[0] + ".kicad_sch"
+# schematic_for lives in gate.kicad, which needs it to fail closed before a
+# DRC run; re-exported here because export_package is its other caller.
+from gate.kicad import KicadUnavailable, schematic_for  # noqa: F401
 
 
 def _run(runner, cmd):

@@ -1,0 +1,18 @@
+{
+  "name": "prefab-gate",
+  "owner": {
+    "name": "Mark"
+  },
+  "metadata": {
+    "description": "A pre-fabrication gate for KiCad PCBs — runs DRC with zone refill and schematic parity checking, and refuses to export a fab package from a board that has not passed."
+  },
+  "plugins": [
+    {
+      "name": "prefab-gate",
+      "source": "./",
+      "description": "Refuses to produce a KiCad fab package from a board that has not passed verification. Runs DRC with zone refill and schematic parity, classifies findings as blocking or cosmetic, and exports gerbers, drill, CPL and BOM only when nothing blocks.",
+      "version": "0.1.0",
+      "author": { "name": "Mark" }
+    }
+  ]
+}

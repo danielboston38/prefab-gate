@@ -12,7 +12,11 @@ blocks — exports gerbers, drill files, CPL and BOM into a manifested package.
     python3 scripts/prefab_gate.py check <board.kicad_pcb>
     python3 scripts/prefab_gate.py package <board.kicad_pcb> [--out fab]
 
-`check` runs DRC and parity, prints a verdict, and exits — no files written.
+Installed as a Claude Code plugin, use `${CLAUDE_PLUGIN_ROOT}/scripts/prefab_gate.py`.
+
+`check` runs DRC and parity, prints a verdict, and exits — no package is
+written. It still runs with `--refill-zones --save-board`, so it can rewrite
+the board's zone fills; it says so when it does.
 `package` does the same, and if the verdict passes, exports the fab package
 and writes a `manifest.json` alongside it recording the board hash, the
 kicad-cli version, and every finding (including waived cosmetic ones).
@@ -24,7 +28,16 @@ treat findings that are normally cosmetic more conservatively.
 
 - `0` — clean (and, for `package`, packaged)
 - `2` — blocked; at least one blocking finding, no files written
-- `3` — kicad-cli missing, unreachable, or too old
+- `3` — the gate could not run: kicad-cli missing, unreachable or too old, the
+  board or its schematic missing, unreadable DRC output, or a usage error.
+  Usage errors take `3` rather than argparse's default `2` so CI can tell a
+  mistyped flag from a board that failed verification.
+
+## Installing as a plugin
+
+Plugin metadata lives in `.claude-plugin/plugin.json`, with
+`.claude-plugin/marketplace.json` alongside it so this directory can be added
+as a single-plugin marketplace.
 
 ## kicad-cli
 

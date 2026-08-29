@@ -72,12 +72,21 @@ def _gate(args, d) -> int:
 
     code = 0 if verdict.passed else 2
     if verdict.passed and args.command == "package":
-        package = d["export_package"](cli, args.board, args.out)
-        files = [os.path.join(root, f) for root, _, fs in os.walk(package) for f in fs]
-        manifest = build_manifest(args.board, d["cli_version"](cli), verdict, files,
-                                  package)
-        with open(os.path.join(package, "manifest.json"), "w") as fh:
-            json.dump(manifest, fh, indent=2)
+        def write_manifest(staging):
+            # Written into the staging directory, so the one os.replace inside
+            # export_package publishes the package and its receipt together.
+            # Writing it afterwards left a window in which a complete-looking
+            # fab package existed with no record of what the gate let past.
+            files = [os.path.join(root, f)
+                     for root, _, fs in os.walk(staging) for f in fs]
+            manifest = build_manifest(args.board, d["cli_version"](cli), verdict,
+                                      files, staging, strict=args.strict,
+                                      out_dir=args.out)
+            with open(os.path.join(staging, "manifest.json"), "w") as fh:
+                json.dump(manifest, fh, indent=2)
+
+        package = d["export_package"](cli, args.board, args.out,
+                                      on_staged=write_manifest)
         print(f"\nPackage written to {package}")
 
     if args.json:

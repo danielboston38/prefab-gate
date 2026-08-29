@@ -21,14 +21,19 @@ CLEAN_WITH_COSMETIC = {
 
 
 def deps(drc, exported=None, record=None):
-    def export(cli, board, out_dir, *args, **kwargs):
+    def export(cli, board, out_dir, *args, on_staged=None, **kwargs):
         if record is not None:
             record.append((cli, board, out_dir))
-        # Real export_package always returns an existing directory (atomic
-        # os.replace on success) — the manifest write in prefab_gate.py is
-        # unconditional on that, so the double must honor it too.
+        # Real export_package builds in a staging directory, calls on_staged
+        # there once every export has succeeded, then publishes with a single
+        # os.replace. The manifest is written by that callback, so a double
+        # that skips it would quietly test a gate that writes no receipt.
+        staging = os.path.abspath(".staging")
+        os.makedirs(staging, exist_ok=True)
+        if on_staged is not None:
+            on_staged(staging)
         package = os.path.abspath("2026-01-01-00-00-00")
-        os.makedirs(package, exist_ok=True)
+        os.replace(staging, package)
         return package
     return {"locate_cli": lambda: "kicad-cli", "probe_capability": lambda cli: None,
             "run_drc": lambda cli, board: drc, "export_package": export,
@@ -183,11 +188,12 @@ class TestExitContract(unittest.TestCase):
         self.assertIn("Permission denied", out.getvalue())
 
     def test_a_failed_manifest_write_exits_three(self):
-        def export(cli, board, out_dir, *args, **kwargs):
-            package = os.path.abspath("pkg")
+        def export(cli, board, out_dir, *args, on_staged=None, **kwargs):
+            staging = os.path.abspath(".staging")
             # A directory where manifest.json belongs: open() raises OSError.
-            os.makedirs(os.path.join(package, "manifest.json"), exist_ok=True)
-            return package
+            os.makedirs(os.path.join(staging, "manifest.json"), exist_ok=True)
+            on_staged(staging)
+            return staging
         d = deps(CLEAN)
         d["export_package"] = export
         with redirect_stdout(io.StringIO()) as out:
@@ -204,3 +210,46 @@ class TestExitContract(unittest.TestCase):
             code = main(["package", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
         self.assertIn("export gerbers failed", out.getvalue())
+
+
+class TestManifestIsAtomicWithThePackage(unittest.TestCase):
+    """A published package without its receipt is a package nobody can audit."""
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def test_the_manifest_is_written_into_staging_before_the_package_exists(self):
+        observed = {}
+
+        def export(cli, board, out_dir, *args, on_staged=None, **kwargs):
+            staging = os.path.abspath(".staging")
+            os.makedirs(staging, exist_ok=True)
+            on_staged(staging)
+            observed["in_staging"] = os.path.isfile(
+                os.path.join(staging, "manifest.json"))
+            package = os.path.abspath("pkg")
+            os.replace(staging, package)
+            return package
+
+        d = deps(CLEAN)
+        d["export_package"] = export
+        with redirect_stdout(io.StringIO()):
+            code = main(["package", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 0)
+        self.assertIs(observed["in_staging"], True)
+
+    def test_the_manifest_records_the_policy_the_run_used(self):
+        with redirect_stdout(io.StringIO()):
+            main(["package", "b.kicad_pcb", "--out", "pcbway_production"],
+                 deps=deps(CLEAN))
+        with open(os.path.join(os.path.abspath("2026-01-01-00-00-00"),
+                               "manifest.json")) as fh:
+            manifest = json.load(fh)
+        self.assertIs(manifest["policy"]["strict"], False)
+        self.assertEqual(manifest["policy"]["out_dir"], "pcbway_production")

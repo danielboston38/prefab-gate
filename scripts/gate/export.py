@@ -24,7 +24,27 @@ def _run(runner, cmd):
             f"{(getattr(result, 'stderr', '') or '').strip()}")
 
 
-def export_package(cli: str, board: str, out_dir: str, runner=subprocess.run) -> str:
+def _describe(path: str) -> str:
+    if not os.path.isdir(path):
+        return "a file"
+    try:
+        return "a directory" if os.listdir(path) else "an empty directory"
+    except OSError:
+        return "a directory"
+
+
+def export_package(cli: str, board: str, out_dir: str, runner=subprocess.run,
+                   on_staged=None) -> str:
+    """Export a fab package into <out_dir>/<timestamp>/, atomically.
+
+    on_staged, if given, is called with the staging directory once all four
+    exports have succeeded and before the directory is published. Anything
+    that must be inside the package — the manifest — is written there, so
+    the single os.replace publishes the package and its receipt together.
+    A failure in the callback leaves nothing behind, exactly like a failed
+    export: there is no window in which a complete-looking package exists
+    without its receipt.
+    """
     stamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     final = os.path.join(out_dir, stamp)
     os.makedirs(out_dir, exist_ok=True)
@@ -40,6 +60,16 @@ def export_package(cli: str, board: str, out_dir: str, runner=subprocess.run) ->
         _run(runner, [cli, "sch", "export", "bom", "--group-by", "",
                       "--fields", "Reference,Value,Footprint,Manufacturer,MPN,LCSC,Datasheet",
                       "-o", os.path.join(staging, "bom.csv"), schematic_for(board)])
+        if on_staged is not None:
+            on_staged(staging)
+        # os.replace happily renames onto an existing *empty* directory, which
+        # would silently claim a path someone else is using. Check first, and
+        # keep the OSError catch as a backstop for the non-empty case and races.
+        if os.path.lexists(final):
+            raise KicadUnavailable(
+                f"cannot publish the package to {final}: {_describe(final)} already "
+                "exists there. A package from the same second is still on disk — "
+                "wait a moment and run again, or move it aside.")
         try:
             os.replace(staging, final)
         except OSError as exc:

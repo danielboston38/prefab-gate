@@ -62,23 +62,61 @@ class TestExport(unittest.TestCase):
             export_package("kicad-cli", self.board, out, runner=self.runner(fail_on="drill"))
         self.assertEqual([] if not os.path.isdir(out) else os.listdir(out), [])
 
-    def test_a_pre_existing_final_path_raises_a_comprehensible_error(self):
-        out = os.path.join(self.tmp.name, "fab")
-        os.makedirs(out, exist_ok=True)
-        fixed_stamp = "2026-01-01-00-00-00"
-        os.makedirs(os.path.join(out, fixed_stamp))
-        with open(os.path.join(out, fixed_stamp, "gerbers"), "w") as fh:
-            fh.write("existing package from a prior run")
-
+    def _fixed_stamp(self):
         class FixedDatetime(gate.export.datetime):
             @classmethod
             def now(cls, tz=None):
                 return gate.export.datetime(2026, 1, 1, 0, 0, 0)
+        return mock.patch.object(gate.export, "datetime", FixedDatetime)
 
-        with mock.patch.object(gate.export, "datetime", FixedDatetime):
+    def _collides_with(self, populate):
+        out = os.path.join(self.tmp.name, "fab")
+        fixed_stamp = "2026-01-01-00-00-00"
+        os.makedirs(os.path.join(out, fixed_stamp))
+        populate(os.path.join(out, fixed_stamp))
+        with self._fixed_stamp():
             with self.assertRaises(KicadUnavailable) as ctx:
                 export_package("kicad-cli", self.board, out, runner=self.runner())
-
         self.assertIn(os.path.join(out, fixed_stamp), str(ctx.exception))
-        staging_dirs = [d for d in os.listdir(out) if d.startswith(".staging-")]
-        self.assertEqual(staging_dirs, [])
+        self.assertEqual([d for d in os.listdir(out) if d.startswith(".staging-")], [])
+        return str(ctx.exception)
+
+    def test_a_pre_existing_final_path_raises_a_comprehensible_error(self):
+        def populate(path):
+            with open(os.path.join(path, "gerbers"), "w") as fh:
+                fh.write("existing package from a prior run")
+        self.assertIn("directory", self._collides_with(populate))
+
+    def test_an_empty_pre_existing_final_path_is_reported_not_silently_claimed(self):
+        """os.replace renames onto an empty directory without complaint."""
+        self.assertIn("empty directory", self._collides_with(lambda path: None))
+
+    def test_on_staged_runs_after_the_exports_and_before_the_publish(self):
+        out = os.path.join(self.tmp.name, "fab")
+        seen = {}
+
+        def on_staged(staging):
+            seen["staging"] = staging
+            seen["contents"] = sorted(os.listdir(staging))
+            with open(os.path.join(staging, "manifest.json"), "w") as fh:
+                fh.write("{}")
+
+        package = export_package("kicad-cli", self.board, out,
+                                 runner=self.runner(), on_staged=on_staged)
+        # It saw every export, and it saw them in staging, not in the package.
+        self.assertEqual(seen["contents"], ["bom.csv", "cpl.csv", "drill", "gerbers"])
+        self.assertNotEqual(seen["staging"], package)
+        # The manifest arrived with the package, in one atomic rename.
+        self.assertTrue(os.path.isfile(os.path.join(package, "manifest.json")))
+
+    def test_a_failing_on_staged_publishes_nothing(self):
+        """No window in which a complete package exists without its receipt."""
+        out = os.path.join(self.tmp.name, "fab")
+
+        def on_staged(staging):
+            raise OSError("disk full")
+
+        with self.assertRaises(OSError):
+            export_package("kicad-cli", self.board, out, runner=self.runner(),
+                           on_staged=on_staged)
+        self.assertEqual(os.listdir(out), [])

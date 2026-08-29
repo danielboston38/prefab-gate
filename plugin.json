@@ -1,0 +1,7 @@
+{
+  "name": "prefab-gate",
+  "version": "0.1.0",
+  "description": "Refuses to produce a KiCad fab package from a board that has not passed verification. Runs DRC with zone refill and schematic parity, classifies findings as blocking or cosmetic, and exports gerbers, drill, CPL and BOM only when nothing blocks.",
+  "license": "MIT",
+  "keywords": ["kicad", "pcb", "drc", "fabrication", "gerber", "hardware"]
+}

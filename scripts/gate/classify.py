@@ -12,12 +12,16 @@ BLOCKING_PARITY = (
     "doesn't match footprint given by symbol",
     "'Do not populate' settings differ",
     "Missing footprint",
-    "not in schematic",
     "doesn't match net given by schematic",
+    "Pad missing net given by schematic",
+    "No corresponding pin found in schematic",
+    "No pad found for pin",
 )
 COSMETIC_PARITY = (
     "Missing symbol field",
     "'Exclude from bill of materials' settings differ",
+    "doesn't match symbol value",
+    "differs (PCB:",
 )
 
 

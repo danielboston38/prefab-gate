@@ -48,12 +48,34 @@ class TestClassifyParity(unittest.TestCase):
                                  "footprint_missing")]))
         self.assertEqual(len(v.blocking), 1)
 
-    def test_extra_footprint_not_in_schematic_blocks(self):
-        v = classify(drc([parity("Footprint J2 not in schematic",
-                                 "footprint_missing")]))
-        self.assertEqual(len(v.blocking), 1)
-
     def test_net_mismatch_blocks(self):
         v = classify(drc([parity(
             "Pad net (GND) doesn't match net given by schematic (/AUDIO_OUT)")]))
         self.assertEqual(len(v.blocking), 1)
+
+    def test_pad_missing_net_given_by_schematic_blocks(self):
+        v = classify(drc([parity(
+            "Pad missing net given by schematic (/AUDIO_OUT)")]))
+        self.assertEqual(len(v.blocking), 1)
+
+    def test_no_corresponding_pin_found_blocks(self):
+        v = classify(drc([parity("No corresponding pin found in schematic")]))
+        self.assertEqual(len(v.blocking), 1)
+
+    def test_no_pad_found_for_pin_blocks(self):
+        v = classify(drc([parity("No pad found for pin 3 in schematic")]))
+        self.assertEqual(len(v.blocking), 1)
+
+    def test_symbol_value_mismatch_is_cosmetic(self):
+        v = classify(drc([parity(
+            "Value (220) doesn't match symbol value (330)",
+            "footprint_symbol_value_mismatch")]))
+        self.assertEqual(len(v.cosmetic), 1)
+        self.assertTrue(v.passed)
+
+    def test_field_differs_is_cosmetic(self):
+        v = classify(drc([parity(
+            "Field 'MPN' differs (PCB: '', Schematic: 'TPS2553DBVR')",
+            "footprint_symbol_field_mismatch")]))
+        self.assertEqual(len(v.cosmetic), 1)
+        self.assertTrue(v.passed)

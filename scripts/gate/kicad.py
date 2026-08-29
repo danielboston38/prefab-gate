@@ -1,7 +1,9 @@
 """Locating and driving kicad-cli."""
+import json
 import os
 import shutil
 import subprocess
+import tempfile
 
 REQUIRED_FLAGS = ("--format", "--schematic-parity", "--refill-zones")
 
@@ -47,3 +49,28 @@ def probe_capability(cli: str, runner=subprocess.run) -> None:
         raise KicadUnavailable(
             f"{cli} does not support {', '.join(missing)}. The gate needs KiCad 8 or "
             "newer; upgrade KiCad or point KICAD_CLI at a newer install.")
+
+
+def run_drc(cli: str, board: str, runner=subprocess.run) -> dict:
+    """One DRC pass: violations, unconnected items and parity together.
+
+    --refill-zones --save-board is intentional. A stale zone fill is the fault
+    this gate exists to catch, and refilling without saving would leave the
+    board on disk disagreeing with the package just exported from it.
+
+    --exit-code-violations is deliberately not passed: the gate applies its
+    own policy on the parsed JSON, so a non-zero exit here would only obscure
+    a successful run that merely found problems.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "drc.json")
+        result = runner([cli, "pcb", "drc", "--format", "json", "--severity-all",
+                         "--schematic-parity", "--refill-zones", "--save-board",
+                         "-o", out, board],
+                        capture_output=True, text=True)
+        if getattr(result, "returncode", 0) != 0:
+            raise KicadUnavailable(
+                f"kicad-cli DRC failed (exit {result.returncode}): "
+                f"{(getattr(result, 'stderr', '') or '').strip()}")
+        with open(out) as fh:
+            return json.load(fh)

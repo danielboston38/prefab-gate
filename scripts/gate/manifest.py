@@ -5,8 +5,9 @@ policy, and what did the gate knowingly allow past?
 """
 import hashlib
 import os
-from dataclasses import asdict
 from datetime import datetime, timezone
+
+from gate.report import verdict_json
 
 
 def sha256(path: str) -> str:
@@ -37,10 +38,8 @@ def build_manifest(board: str, cli_version: str, verdict, files, package_root: s
         "kicad_cli_version": cli_version,
         "policy": {"strict": bool(strict), "out_dir": out_dir},
         "board": {"path": os.path.basename(board), "sha256": sha256(board)},
-        "verdict": {
-            "passed": verdict.passed,
-            "blocking": [asdict(f) for f in verdict.blocking],
-            "cosmetic": [asdict(f) for f in verdict.cosmetic],
-        },
+        # Includes what was excluded and which checks the project file
+        # disables: "PASSED" is only meaningful alongside its own coverage.
+        "verdict": verdict_json(verdict),
         "files": [{"name": name_for(p), "sha256": sha256(p)} for p in sorted(files)],
     }

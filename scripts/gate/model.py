@@ -17,6 +17,10 @@ class Finding:
 class Verdict:
     blocking: list = field(default_factory=list)
     cosmetic: list = field(default_factory=list)
+    # What the gate was told not to look at. Neither of these is a finding, and
+    # both belong in the receipt: "PASSED" means little without them.
+    excluded: int = 0            # findings the user excluded in the GUI
+    ignored_checks: list = field(default_factory=list)  # rules set to "ignore"
 
     @property
     def passed(self) -> bool:

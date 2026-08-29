@@ -9,6 +9,23 @@ def _line(finding):
             f"      {finding.reason}")
 
 
+def _switched_off(verdict) -> str:
+    """What the gate was told not to look at.
+
+    A receipt whose job is "what did the gate knowingly allow past" has to
+    record what was switched off, or PASSED overstates its own coverage.
+    """
+    parts = []
+    if verdict.excluded:
+        parts.append(f"{verdict.excluded} excluded")
+    if verdict.ignored_checks:
+        keys = ", ".join(c.get("key") or c.get("description", "?")
+                         for c in verdict.ignored_checks)
+        parts.append(f"{len(verdict.ignored_checks)} check categories disabled "
+                     f"in project settings ({keys})")
+    return f"Not checked: {'; '.join(parts)}." if parts else ""
+
+
 def render_text(verdict) -> str:
     out = []
     if verdict.passed:
@@ -24,12 +41,23 @@ def render_text(verdict) -> str:
         out.append("")
         out.append(f"Cosmetic ({len(verdict.cosmetic)}):")
         out.extend(_line(f) for f in verdict.cosmetic)
+    switched_off = _switched_off(verdict)
+    if switched_off:
+        out.append("")
+        out.append(switched_off)
     return "\n".join(out)
 
 
 def render_json(verdict) -> str:
-    return json.dumps({
+    return json.dumps(verdict_json(verdict), indent=2)
+
+
+def verdict_json(verdict) -> dict:
+    """The verdict as plain data — shared by --json and the package manifest."""
+    return {
         "passed": verdict.passed,
         "blocking": [asdict(f) for f in verdict.blocking],
         "cosmetic": [asdict(f) for f in verdict.cosmetic],
-    }, indent=2)
+        "excluded": verdict.excluded,
+        "ignored_checks": list(verdict.ignored_checks),
+    }

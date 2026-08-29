@@ -34,3 +34,24 @@ class TestRenderJson(unittest.TestCase):
         self.assertEqual(len(data["blocking"]), 1)
         self.assertEqual(len(data["cosmetic"]), 1)
         self.assertEqual(data["blocking"][0]["type"], "courtyards_overlap")
+
+
+class TestSwitchedOff(unittest.TestCase):
+    """PASSED means little without what the gate was told not to look at."""
+
+    def test_text_reports_excluded_findings_and_disabled_checks(self):
+        text = render_text(Verdict(cosmetic=[f(False)], excluded=3, ignored_checks=[
+            {"key": "missing_courtyard", "description": "no courtyard"},
+            {"key": "track_not_centered_on_via", "description": "off centre"}]))
+        self.assertIn("3 excluded", text)
+        self.assertIn("2 check categories disabled in project settings", text)
+        self.assertIn("missing_courtyard", text)
+
+    def test_text_stays_quiet_when_nothing_was_switched_off(self):
+        self.assertNotIn("Not checked", render_text(Verdict(cosmetic=[f(False)])))
+
+    def test_json_carries_them_too(self):
+        data = json.loads(render_json(Verdict(excluded=1, ignored_checks=[
+            {"key": "missing_courtyard", "description": "no courtyard"}])))
+        self.assertEqual(data["excluded"], 1)
+        self.assertEqual(data["ignored_checks"][0]["key"], "missing_courtyard")

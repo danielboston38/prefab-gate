@@ -3,6 +3,8 @@
 Pure: no filesystem, no subprocess. That is what makes the policy testable
 without KiCad installed.
 """
+from dataclasses import replace
+
 from gate.model import Finding, Verdict
 
 # Parity descriptions are matched by substring because kicad-cli's `type` field
@@ -29,26 +31,50 @@ def _items(entry):
     return tuple(i.get("description", "") for i in entry.get("items", []))
 
 
+def _judge_severity(severity: str):
+    """An unrecognised severity blocks.
+
+    Treating anything-but-"error" as cosmetic made an absent or future severity
+    purely decorative, while the parity path deliberately fails closed on an
+    unfamiliar message. The two policies now agree: what the gate does not
+    understand, it does not wave through.
+    """
+    if severity == "error":
+        return True, "DRC severity is error"
+    if severity == "warning":
+        return False, "DRC severity is warning"
+    return True, ("unrecognised DRC severity "
+                  f"{severity!r}, blocking by default")
+
+
 def classify(drc: dict, strict: bool = False) -> Verdict:
-    verdict = Verdict()
+    # Recorded, not judged: rules the project file sets to "ignore" never
+    # appear as findings at all, so a clean verdict on a board with five
+    # checks switched off would otherwise say nothing about them.
+    verdict = Verdict(ignored_checks=list(drc.get("ignored_checks", []) or []))
 
     def place(finding):
-        if finding.blocking or strict:
-            verdict.blocking.append(
-                finding if finding.blocking
-                else Finding(**{**finding.__dict__, "blocking": True,
-                                "reason": finding.reason + " (promoted by --strict)"}))
+        if finding.blocking:
+            verdict.blocking.append(finding)
+        elif strict:
+            verdict.blocking.append(replace(
+                finding, blocking=True,
+                reason=finding.reason + " (promoted by --strict)"))
         else:
             verdict.cosmetic.append(finding)
 
     for v in drc.get("violations", []):
         severity = v.get("severity", "")
         if severity == "exclusion":
-            continue          # user excluded it in the GUI; counted, not judged
+            # Excluded in the GUI: counted, not judged. The count is the point —
+            # it is the difference between "nothing was wrong" and "you told me
+            # not to look".
+            verdict.excluded += 1
+            continue
+        blocking, reason = _judge_severity(severity)
         place(Finding(kind="violation", type=v.get("type", ""),
                       description=v.get("description", ""), severity=severity,
-                      items=_items(v), blocking=(severity == "error"),
-                      reason=f"DRC severity is {severity or 'unset'}"))
+                      items=_items(v), blocking=blocking, reason=reason))
 
     for u in drc.get("unconnected_items", []):
         place(Finding(kind="unconnected", type=u.get("type", "unconnected"),

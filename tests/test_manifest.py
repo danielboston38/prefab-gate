@@ -61,3 +61,12 @@ class TestManifest(unittest.TestCase):
                            strict=True, out_dir="pcbway_production")
         self.assertIs(m["policy"]["strict"], True)
         self.assertEqual(m["policy"]["out_dir"], "pcbway_production")
+
+    def test_manifest_records_what_the_gate_was_told_not_to_look_at(self):
+        verdict = Verdict(excluded=2, ignored_checks=[
+            {"key": "missing_courtyard", "description": "no courtyard"}])
+        m = build_manifest(self.board, "10.0.5", verdict, [], self.tmp.name,
+                           strict=False, out_dir="fab")
+        self.assertEqual(m["verdict"]["excluded"], 2)
+        self.assertEqual([c["key"] for c in m["verdict"]["ignored_checks"]],
+                         ["missing_courtyard"])

@@ -9,9 +9,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gate.classify import classify                      # noqa: E402
-from gate.export import export_package                  # noqa: E402
+from gate.export import (export_package, locate_schematic,  # noqa: E402
+                         schematic_candidates, schematic_for)
 from gate.kicad import KicadUnavailable, locate_cli, probe_capability, run_drc  # noqa: E402
 from gate.manifest import build_manifest, sha256        # noqa: E402
+from gate.model import Parity                           # noqa: E402
 from gate.report import render_json, render_text        # noqa: E402
 
 
@@ -22,7 +24,9 @@ def _cli_version(cli):
 
 DEFAULT_DEPS = {"locate_cli": locate_cli, "probe_capability": probe_capability,
                 "run_drc": run_drc, "export_package": export_package,
-                "cli_version": _cli_version, "board_hash": sha256}
+                "cli_version": _cli_version, "board_hash": sha256,
+                "locate_schematic": locate_schematic,
+                "schematic_candidates": schematic_candidates}
 
 
 class GateArgumentParser(argparse.ArgumentParser):
@@ -53,7 +57,44 @@ def _build_parser():
             p.add_argument("--out", default="fab")
         p.add_argument("--json", action="store_true")
         p.add_argument("--strict", action="store_true")
+        p.add_argument("--schematic", default=None, metavar="PATH",
+                       help="schematic to check parity against, when it is not "
+                            "beside the board under the board's own name")
+        p.add_argument("--no-parity", action="store_true",
+                       help="skip schematic parity (for a PCB-only design). "
+                            "Recorded as a cosmetic finding, never silently.")
     return parser
+
+
+def _resolve_parity(args, d) -> Parity:
+    """Decide whether parity can run, and record why when it cannot.
+
+    Never a silent skip: every branch that does not run parity carries a reason
+    that ends up in the report and the manifest.
+    """
+    if args.no_parity:
+        return Parity(ran=False, waived=True, reason=(
+            "skipped at your request (--no-parity); the board was not compared "
+            "against any schematic"))
+    schematic = d["locate_schematic"](args.board, args.schematic)
+    if schematic is not None:
+        return Parity(ran=True, schematic=schematic)
+
+    conventional = schematic_for(args.board)
+    candidates = d["schematic_candidates"](args.board)
+    if not candidates:
+        where = f"no .kicad_sch beside the board (looked for {conventional})"
+    else:
+        names = ", ".join(os.path.basename(c) for c in candidates)
+        where = (f"{len(candidates)} schematics beside the board and none named "
+                 f"{os.path.basename(conventional)}, so the gate will not guess "
+                 f"which one is the design: {names}")
+    return Parity(ran=False, reason=(
+        f"parity could not run: {where}. Point at one with --schematic, or "
+        "accept a PCB-only check with --no-parity. Note that kicad-cli derives "
+        "the schematic from the board's basename and cannot be told otherwise, "
+        f"so a schematic under any other name must be renamed to "
+        f"{os.path.basename(conventional)} for parity to actually run."))
 
 
 def _gate(args, d) -> int:
@@ -61,13 +102,23 @@ def _gate(args, d) -> int:
     d["probe_capability"](cli)
     # --refill-zones --save-board can rewrite the board. Hash it either side so
     # the resulting git diff is expected rather than mysterious.
+    parity = _resolve_parity(args, d)
     before = d["board_hash"](args.board)
-    drc = d["run_drc"](cli, args.board)
+    drc, parity_error = d["run_drc"](cli, args.board, parity=parity.ran)
+    if parity.ran and parity_error:
+        # kicad-cli exits 0 and emits an empty parity list when it could not
+        # load the schematic. The violations in the same report are still
+        # valid; it is the parity half that did not run.
+        parity = Parity(ran=False, schematic=parity.schematic, reason=(
+            "kicad-cli could not run the parity tests against "
+            f"{parity.schematic}, and exited 0 reporting no parity issues "
+            "anyway — its exit code cannot be trusted here. It said: "
+            f"{parity_error.strip()}"))
     if d["board_hash"](args.board) != before:
         print(f"Note: refilling updated the zone fills in {args.board} — "
               "the board file has been modified and should be committed.\n")
 
-    verdict = classify(drc, strict=args.strict)
+    verdict = classify(drc, strict=args.strict, parity=parity)
     print(render_text(verdict))
 
     code = 0 if verdict.passed else 2

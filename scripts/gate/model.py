@@ -13,6 +13,19 @@ class Finding:
     reason: str        # why the gate placed it in this class
 
 
+@dataclass(frozen=True)
+class Parity:
+    """Whether schematic parity actually ran, and against what.
+
+    Carried on every verdict so a receipt can tell "parity clean" from "parity
+    never ran" — the distinction the whole gate turns on.
+    """
+    ran: bool
+    schematic: str = ""   # the schematic it ran against, when it ran
+    reason: str = ""      # why it did not, when it did not
+    waived: bool = False  # the user opted out with --no-parity
+
+
 @dataclass
 class Verdict:
     blocking: list = field(default_factory=list)
@@ -21,6 +34,7 @@ class Verdict:
     # both belong in the receipt: "PASSED" means little without them.
     excluded: int = 0            # findings the user excluded in the GUI
     ignored_checks: list = field(default_factory=list)  # rules set to "ignore"
+    parity: Parity = field(default_factory=lambda: Parity(ran=True))
 
     @property
     def passed(self) -> bool:

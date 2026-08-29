@@ -35,9 +35,14 @@ def deps(drc, exported=None, record=None):
         package = os.path.abspath("2026-01-01-00-00-00")
         os.replace(staging, package)
         return package
+    # run_drc returns (drc, parity_error); parity_error is kicad-cli's stderr
+    # when it could not run the parity tests despite exiting 0.
     return {"locate_cli": lambda: "kicad-cli", "probe_capability": lambda cli: None,
-            "run_drc": lambda cli, board: drc, "export_package": export,
-            "cli_version": lambda cli: "10.0.5", "board_hash": lambda path: "same"}
+            "run_drc": lambda cli, board, parity=True: (drc, ""),
+            "export_package": export,
+            "cli_version": lambda cli: "10.0.5", "board_hash": lambda path: "same",
+            "locate_schematic": lambda board, override=None: "b.kicad_sch",
+            "schematic_candidates": lambda board: []}
 
 
 class TestCli(unittest.TestCase):
@@ -168,7 +173,7 @@ class TestExitContract(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 3)
 
     def test_malformed_drc_json_exits_three(self):
-        def bad_json(cli, board):
+        def bad_json(cli, board, parity=True):
             raise json.JSONDecodeError("Expecting value", "{", 0)
         d = deps(CLEAN)
         d["run_drc"] = bad_json
@@ -253,3 +258,117 @@ class TestManifestIsAtomicWithThePackage(unittest.TestCase):
             manifest = json.load(fh)
         self.assertIs(manifest["policy"]["strict"], False)
         self.assertEqual(manifest["policy"]["out_dir"], "pcbway_production")
+
+
+class TestParityCannotRun(unittest.TestCase):
+    """Parity that did not run is a finding, not a silent skip.
+
+    A hard refusal would make the gate unusable — roughly one real KiCad
+    project in five has no schematic under the board's own basename. A silent
+    skip is the fail-open this whole fix exists to close. So: a finding.
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def verdict_json(self, argv, d):
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(argv + ["--json"], deps=d)
+        return code, json.loads(out.getvalue().split("\n\n")[-1]), out.getvalue()
+
+    def test_no_schematic_anywhere_blocks_and_says_what_it_looked_for(self):
+        d = deps(CLEAN)
+        d["locate_schematic"] = lambda board, override=None: None
+        code, data, text = self.verdict_json(["check", "b.kicad_pcb"], d)
+        self.assertEqual(code, 2)
+        self.assertEqual([f["type"] for f in data["blocking"]], ["parity_not_run"])
+        self.assertIn("no .kicad_sch beside the board", data["blocking"][0]["reason"])
+        self.assertIn("--schematic", data["blocking"][0]["reason"])
+        self.assertIs(data["parity"]["ran"], False)
+
+    def test_several_candidates_are_named_rather_than_guessed_between(self):
+        d = deps(CLEAN)
+        d["locate_schematic"] = lambda board, override=None: None
+        d["schematic_candidates"] = lambda board: ["a.kicad_sch", "b2.kicad_sch"]
+        code, data, _ = self.verdict_json(["check", "b.kicad_pcb"], d)
+        self.assertEqual(code, 2)
+        reason = data["blocking"][0]["reason"]
+        self.assertIn("a.kicad_sch", reason)
+        self.assertIn("b2.kicad_sch", reason)
+
+    def test_the_schematic_flag_is_passed_through_to_the_locator(self):
+        seen = {}
+
+        def locate(board, override=None):
+            seen["override"] = override
+            return override
+        d = deps(CLEAN)
+        d["locate_schematic"] = locate
+        code, data, _ = self.verdict_json(
+            ["check", "b.kicad_pcb", "--schematic", "elsewhere/s.kicad_sch"], d)
+        self.assertEqual(code, 0)
+        self.assertEqual(seen["override"], "elsewhere/s.kicad_sch")
+        self.assertEqual(data["parity"]["schematic"], "elsewhere/s.kicad_sch")
+
+    def test_no_parity_downgrades_to_cosmetic_but_still_records_it(self):
+        code, data, text = self.verdict_json(["check", "b.kicad_pcb", "--no-parity"], deps(CLEAN))
+        self.assertEqual(code, 0)
+        self.assertEqual([f["type"] for f in data["cosmetic"]], ["parity_not_run"])
+        self.assertIs(data["parity"]["ran"], False)
+        self.assertIs(data["parity"]["waived"], True)
+        self.assertIn("Schematic parity did not run", text)
+
+    def test_no_parity_stops_the_parity_flag_reaching_kicad_cli(self):
+        seen = {}
+
+        def run_drc(cli, board, parity=True):
+            seen["parity"] = parity
+            return CLEAN, ""
+        d = deps(CLEAN)
+        d["run_drc"] = run_drc
+        with redirect_stdout(io.StringIO()):
+            main(["check", "b.kicad_pcb", "--no-parity"], deps=d)
+        self.assertIs(seen["parity"], False)
+
+    def test_a_stderr_marker_blocks_even_though_a_schematic_was_located(self):
+        """DRC results stay valid; it is the parity half that did not run."""
+        d = deps(CLEAN)
+        d["run_drc"] = lambda cli, board, parity=True: (
+            CLEAN, "Failed to fetch schematic netlist for parity tests.")
+        code, data, _ = self.verdict_json(["check", "b.kicad_pcb"], d)
+        self.assertEqual(code, 2)
+        self.assertEqual([f["type"] for f in data["blocking"]], ["parity_not_run"])
+        self.assertIn("Failed to fetch schematic netlist",
+                      data["blocking"][0]["reason"])
+        self.assertIs(data["parity"]["ran"], False)
+
+    def test_a_bad_schematic_override_is_an_environment_error(self):
+        def locate(board, override=None):
+            raise KicadUnavailable("--schematic points at '/nope', which does not exist")
+        d = deps(CLEAN)
+        d["locate_schematic"] = locate
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb", "--schematic", "/nope"], deps=d)
+        self.assertEqual(code, 3)
+        self.assertIn("does not exist", out.getvalue())
+
+    def test_a_clean_run_records_the_schematic_parity_actually_used(self):
+        code, data, _ = self.verdict_json(["check", "b.kicad_pcb"], deps(CLEAN))
+        self.assertEqual(code, 0)
+        self.assertIs(data["parity"]["ran"], True)
+        self.assertEqual(data["parity"]["schematic"], "b.kicad_sch")
+
+    def test_the_manifest_records_that_parity_ran_and_against_what(self):
+        with redirect_stdout(io.StringIO()):
+            main(["package", "b.kicad_pcb"], deps=deps(CLEAN))
+        with open(os.path.join(os.path.abspath("2026-01-01-00-00-00"),
+                               "manifest.json")) as fh:
+            manifest = json.load(fh)
+        self.assertIs(manifest["verdict"]["parity"]["ran"], True)
+        self.assertEqual(manifest["verdict"]["parity"]["schematic"], "b.kicad_sch")

@@ -5,7 +5,7 @@ without KiCad installed.
 """
 from dataclasses import replace
 
-from gate.model import Finding, Verdict
+from gate.model import Finding, Parity, Verdict
 
 # Parity descriptions are matched by substring because kicad-cli's `type` field
 # is too coarse: footprint_symbol_mismatch covers both a genuine footprint
@@ -47,11 +47,28 @@ def _judge_severity(severity: str):
                   f"{severity!r}, blocking by default")
 
 
-def classify(drc: dict, strict: bool = False) -> Verdict:
+def parity_not_run(parity: Parity) -> Finding:
+    """Parity that could not run is a finding, never a silent skip.
+
+    Blocking by default, exactly like an unrecognised parity description: the
+    gate cannot tell an unchecked board from a clean one. Cosmetic only when
+    the user waived it with --no-parity — a PCB-only design is legitimate, but
+    it may not pass quietly.
+    """
+    return Finding(
+        kind="parity", type="parity_not_run",
+        description="Schematic parity did not run",
+        severity="warning" if parity.waived else "error",
+        items=(), blocking=not parity.waived, reason=parity.reason)
+
+
+def classify(drc: dict, strict: bool = False, parity: Parity = None) -> Verdict:
+    parity = Parity(ran=True) if parity is None else parity
     # Recorded, not judged: rules the project file sets to "ignore" never
     # appear as findings at all, so a clean verdict on a board with five
     # checks switched off would otherwise say nothing about them.
-    verdict = Verdict(ignored_checks=list(drc.get("ignored_checks", []) or []))
+    verdict = Verdict(ignored_checks=list(drc.get("ignored_checks", []) or []),
+                      parity=parity)
 
     def place(finding):
         if finding.blocking:
@@ -95,5 +112,8 @@ def classify(drc: dict, strict: bool = False) -> Verdict:
         place(Finding(kind="parity", type=p.get("type", ""), description=description,
                       severity=p.get("severity", "warning"), items=_items(p),
                       blocking=blocking, reason=reason))
+
+    if not parity.ran:
+        place(parity_not_run(parity))
 
     return verdict

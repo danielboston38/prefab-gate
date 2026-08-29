@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from gate.model import Finding, Verdict
+from gate.model import Finding, Parity, Verdict
 from gate.manifest import sha256, build_manifest
 
 
@@ -70,3 +70,12 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(m["verdict"]["excluded"], 2)
         self.assertEqual([c["key"] for c in m["verdict"]["ignored_checks"]],
                          ["missing_courtyard"])
+
+    def test_manifest_records_whether_parity_ran(self):
+        """A receipt that cannot tell "parity clean" from "parity never ran"
+        is the exact hole this gate exists to close."""
+        m = build_manifest(self.board, "10.0.5",
+                           Verdict(parity=Parity(ran=False, reason="no schematic")),
+                           [], self.tmp.name, strict=False, out_dir="fab")
+        self.assertIs(m["verdict"]["parity"]["ran"], False)
+        self.assertEqual(m["verdict"]["parity"]["reason"], "no schematic")

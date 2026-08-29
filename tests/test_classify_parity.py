@@ -1,5 +1,6 @@
 import unittest
 from gate.classify import classify
+from gate.model import Parity
 
 
 def parity(description, type_="footprint_symbol_mismatch"):
@@ -79,3 +80,35 @@ class TestClassifyParity(unittest.TestCase):
             "footprint_symbol_field_mismatch")]))
         self.assertEqual(len(v.cosmetic), 1)
         self.assertTrue(v.passed)
+
+
+class TestParityNotRun(unittest.TestCase):
+    """The gate cannot tell an unchecked board from a clean one."""
+
+    def test_parity_that_could_not_run_blocks_by_default(self):
+        v = classify(drc([]), parity=Parity(ran=False, reason="no schematic found"))
+        self.assertEqual(len(v.blocking), 1)
+        self.assertEqual(v.blocking[0].type, "parity_not_run")
+        self.assertEqual(v.blocking[0].reason, "no schematic found")
+        self.assertFalse(v.passed)
+
+    def test_an_explicit_waiver_is_cosmetic_but_still_recorded(self):
+        v = classify(drc([]), parity=Parity(ran=False, waived=True,
+                                            reason="skipped at your request"))
+        self.assertTrue(v.passed)
+        self.assertEqual([f.type for f in v.cosmetic], ["parity_not_run"])
+
+    def test_a_waiver_does_not_survive_strict(self):
+        """--strict is for a final pre-order run; nothing rides on a waiver."""
+        v = classify(drc([]), strict=True,
+                     parity=Parity(ran=False, waived=True, reason="skipped"))
+        self.assertFalse(v.passed)
+        self.assertEqual(v.blocking[0].type, "parity_not_run")
+
+    def test_parity_that_ran_adds_no_finding_and_is_recorded(self):
+        v = classify(drc([]), parity=Parity(ran=True, schematic="/p/b.kicad_sch"))
+        self.assertEqual((v.blocking, v.cosmetic), ([], []))
+        self.assertEqual(v.parity.schematic, "/p/b.kicad_sch")
+
+    def test_the_default_is_that_parity_ran(self):
+        self.assertTrue(classify(drc([])).parity.ran)

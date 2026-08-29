@@ -50,11 +50,6 @@ class KicadUnavailable(Exception):
     """kicad-cli is missing, too old, or unable to do what the gate needs."""
 
 
-def schematic_for(board: str) -> str:
-    """The schematic KiCad pairs with this board: same stem, .kicad_sch."""
-    return os.path.splitext(board)[0] + ".kicad_sch"
-
-
 def locate_cli(env=None, which=shutil.which, exists=os.path.exists,
                globber=glob.glob) -> str:
     env = os.environ if env is None else env
@@ -92,8 +87,16 @@ def probe_capability(cli: str, runner=subprocess.run) -> None:
             "newer; upgrade KiCad or point KICAD_CLI at a newer install.")
 
 
-def run_drc(cli: str, board: str, runner=subprocess.run, exists=os.path.exists) -> dict:
+def run_drc(cli: str, board: str, runner=subprocess.run, parity: bool = True):
     """One DRC pass: violations, unconnected items and parity together.
+
+    Returns (drc, parity_error). parity_error is "" on a normal run and
+    kicad-cli's stderr when it could not run the parity tests — which it does
+    while still exiting 0 and emitting "schematic_parity": [], so neither its
+    exit code nor its output can distinguish "parity found nothing" from
+    "parity never ran". The caller turns a non-empty parity_error into a
+    blocking finding; the violations in the same report are still valid, so
+    this is not an environment failure.
 
     --refill-zones --save-board is intentional. A stale zone fill is the fault
     this gate exists to catch, and refilling without saving would leave the
@@ -102,36 +105,19 @@ def run_drc(cli: str, board: str, runner=subprocess.run, exists=os.path.exists) 
     --exit-code-violations is deliberately not passed: the gate applies its
     own policy on the parsed JSON, so a non-zero exit here would only obscure
     a successful run that merely found problems.
-
-    Schematic parity fails *closed*, both before and after the run: kicad-cli
-    reports an empty parity list and exit 0 when it cannot load the schematic,
-    so neither its exit code nor its output can be used to tell "parity found
-    nothing" from "parity never ran".
     """
-    schematic = schematic_for(board)
-    if not exists(schematic):
-        raise KicadUnavailable(
-            f"schematic not found at {schematic}.\n"
-            "Schematic parity is a core check of this gate and cannot run without "
-            "it, and kicad-cli reports an empty parity result with exit 0 rather "
-            "than an error — so a missing schematic would look like a clean board. "
-            "Keep the schematic beside the board under the same base name.")
-
     with tempfile.TemporaryDirectory() as tmp:
         out = os.path.join(tmp, "drc.json")
-        result = runner([cli, "pcb", "drc", "--format", "json", "--severity-all",
-                         "--schematic-parity", "--refill-zones", "--save-board",
-                         "-o", out, board],
-                        capture_output=True, text=True)
+        cmd = [cli, "pcb", "drc", "--format", "json", "--severity-all"]
+        if parity:
+            cmd.append("--schematic-parity")
+        cmd += ["--refill-zones", "--save-board", "-o", out, board]
+        result = runner(cmd, capture_output=True, text=True)
         stderr = (getattr(result, "stderr", "") or "").strip()
         if getattr(result, "returncode", 0) != 0:
             raise KicadUnavailable(
                 f"kicad-cli DRC failed (exit {result.returncode}): {stderr}")
-        if any(marker in stderr for marker in PARITY_FAILED_MARKERS):
-            raise KicadUnavailable(
-                "kicad-cli could not run the schematic parity tests, yet exited "
-                f"{getattr(result, 'returncode', 0)} and reported no parity issues. "
-                "The gate will not treat that as a pass. kicad-cli said:\n"
-                f"{stderr}")
+        parity_error = (stderr if parity and
+                        any(m in stderr for m in PARITY_FAILED_MARKERS) else "")
         with open(out) as fh:
-            return json.load(fh)
+            return json.load(fh), parity_error

@@ -3,13 +3,69 @@ import tempfile
 import unittest
 from unittest import mock
 import gate.export
-from gate.export import export_package, schematic_for
+from gate.export import (export_package, locate_schematic, schematic_candidates,
+                         schematic_for)
 from gate.kicad import KicadUnavailable
 
 
 class TestSchematicFor(unittest.TestCase):
     def test_swaps_the_extension(self):
         self.assertEqual(schematic_for("/p/board.kicad_pcb"), "/p/board.kicad_sch")
+
+
+class TestLocateSchematic(unittest.TestCase):
+    """Roughly one real KiCad project in five has no same-named schematic.
+
+    Refusing to start on that basis would make the gate unusable; guessing
+    silently would reintroduce the fail-open. So: convention, then a sole
+    candidate, then None — and None becomes a finding, never a silent skip.
+    """
+
+    def test_the_conventional_sibling_wins(self):
+        found = locate_schematic("/p/board.kicad_pcb",
+                                 exists=lambda x: x == "/p/board.kicad_sch",
+                                 globber=lambda pattern: ["/p/other.kicad_sch"])
+        self.assertEqual(found, "/p/board.kicad_sch")
+
+    def test_a_sole_differently_named_schematic_is_used(self):
+        found = locate_schematic("/p/example_pcb.kicad_pcb",
+                                 exists=lambda x: False,
+                                 globber=lambda p: ["/p/example_schematic.kicad_sch"])
+        self.assertEqual(found, "/p/example_schematic.kicad_sch")
+
+    def test_several_candidates_are_ambiguous_and_yield_none(self):
+        found = locate_schematic("/p/board.kicad_pcb", exists=lambda x: False,
+                                 globber=lambda p: ["/p/a.kicad_sch", "/p/b.kicad_sch"])
+        self.assertIsNone(found)
+
+    def test_no_candidates_at_all_yields_none(self):
+        self.assertIsNone(locate_schematic("/p/board.kicad_pcb",
+                                           exists=lambda x: False,
+                                           globber=lambda p: []))
+
+    def test_an_override_wins_over_everything(self):
+        found = locate_schematic("/p/board.kicad_pcb", override="/elsewhere/s.kicad_sch",
+                                 exists=lambda x: True,
+                                 globber=lambda p: ["/p/a.kicad_sch"])
+        self.assertEqual(found, "/elsewhere/s.kicad_sch")
+
+    def test_an_override_that_does_not_exist_is_an_environment_error(self):
+        with self.assertRaises(KicadUnavailable) as ctx:
+            locate_schematic("/p/board.kicad_pcb", override="/nope.kicad_sch",
+                             exists=lambda x: False, globber=lambda p: [])
+        self.assertIn("/nope.kicad_sch", str(ctx.exception))
+
+
+class TestSchematicCandidates(unittest.TestCase):
+    def test_lists_every_schematic_beside_the_board(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        for name in ("b.kicad_sch", "a.kicad_sch", "b.kicad_pcb"):
+            open(os.path.join(tmp.name, name), "w").close()
+        self.assertEqual(
+            [os.path.basename(c) for c in
+             schematic_candidates(os.path.join(tmp.name, "b.kicad_pcb"))],
+            ["a.kicad_sch", "b.kicad_sch"])
 
 
 class TestExport(unittest.TestCase):

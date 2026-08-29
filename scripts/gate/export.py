@@ -5,15 +5,53 @@ os.replace only on success, so a failure never leaves something that looks
 shippable. Staging lives inside out_dir (not the system temp dir) so the
 final rename is same-filesystem and genuinely atomic.
 """
+import glob
 import os
 import shutil
 import subprocess
 import tempfile
 from datetime import datetime
 
-# schematic_for lives in gate.kicad, which needs it to fail closed before a
-# DRC run; re-exported here because export_package is its other caller.
-from gate.kicad import KicadUnavailable, schematic_for  # noqa: F401
+from gate.kicad import KicadUnavailable
+
+
+def schematic_for(board: str) -> str:
+    """The schematic KiCad itself pairs with this board: same stem, .kicad_sch.
+
+    This is not just a convention the gate follows — `kicad-cli pcb drc` derives
+    the schematic from the board's basename and offers no way to point it
+    elsewhere. A schematic under any other name cannot be used for parity at
+    all, which is why locate_schematic's fallbacks still lead to a finding
+    rather than a promise.
+    """
+    return os.path.splitext(board)[0] + ".kicad_sch"
+
+
+def schematic_candidates(board: str, globber=glob.glob) -> list:
+    """Every .kicad_sch sitting beside the board."""
+    return sorted(globber(os.path.join(os.path.dirname(board) or ".", "*.kicad_sch")))
+
+
+def locate_schematic(board: str, override=None, exists=os.path.exists,
+                     globber=glob.glob):
+    """The schematic to check parity against, or None if there isn't one.
+
+    Roughly one KiCad project in five has no schematic under the board's own
+    basename, so refusing to start on that basis would make the gate unusable
+    on real corpora. It falls back to a sole .kicad_sch beside the board, and
+    returns None rather than guessing when the directory holds several — the
+    caller turns that into a finding, never a silent skip.
+    """
+    if override:
+        if not exists(override):
+            raise KicadUnavailable(
+                f"--schematic points at {override!r}, which does not exist")
+        return override
+    conventional = schematic_for(board)
+    if exists(conventional):
+        return conventional
+    candidates = schematic_candidates(board, globber)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _run(runner, cmd):

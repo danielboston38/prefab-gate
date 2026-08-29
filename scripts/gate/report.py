@@ -63,4 +63,6 @@ def verdict_json(verdict) -> dict:
         "cosmetic": [asdict(f) for f in verdict.cosmetic],
         "excluded": verdict.excluded,
         "ignored_checks": list(verdict.ignored_checks),
+        # The receipt has to distinguish "parity clean" from "parity never ran".
+        "parity": asdict(verdict.parity),
     }

@@ -1,6 +1,6 @@
 import json
 import unittest
-from gate.model import Finding, Verdict
+from gate.model import Finding, Parity, Verdict
 from gate.report import render_text, render_json
 
 
@@ -61,3 +61,17 @@ class TestSwitchedOff(unittest.TestCase):
             {"key": "missing_courtyard", "description": "no courtyard"}])))
         self.assertEqual(data["excluded"], 1)
         self.assertEqual(data["ignored_checks"][0]["key"], "missing_courtyard")
+
+
+class TestParityInJson(unittest.TestCase):
+    def test_json_says_whether_parity_ran_and_against_what(self):
+        data = json.loads(render_json(
+            Verdict(parity=Parity(ran=True, schematic="/p/b.kicad_sch"))))
+        self.assertIs(data["parity"]["ran"], True)
+        self.assertEqual(data["parity"]["schematic"], "/p/b.kicad_sch")
+
+    def test_json_carries_the_reason_parity_did_not_run(self):
+        data = json.loads(render_json(
+            Verdict(parity=Parity(ran=False, reason="no schematic found"))))
+        self.assertIs(data["parity"]["ran"], False)
+        self.assertEqual(data["parity"]["reason"], "no schematic found")

@@ -24,12 +24,33 @@ kicad-cli version, and every finding (including waived cosmetic ones).
 Both accept `--json` to also print the verdict as JSON, and `--strict` to
 treat findings that are normally cosmetic more conservatively.
 
+## Schematic parity
+
+`kicad-cli` exits 0 and reports an empty parity result when it cannot load the
+schematic, so "clean" and "never ran" are indistinguishable from its output
+alone. The gate closes that hole with a `parity_not_run` finding.
+
+It locates the schematic beside the board under the board's own name, else a
+sole `*.kicad_sch` in that directory. Failing that — including when several
+candidates make the choice ambiguous — `parity_not_run` **blocks**, naming what
+was tried.
+
+- `--schematic PATH` — say where the schematic is.
+- `--no-parity` — accept a PCB-only check. The finding is still recorded, as
+  cosmetic, in both the report and the manifest. `--strict` overrides it.
+
+`kicad-cli pcb drc` derives the schematic from the board's basename with no way
+to override it, so a differently-named schematic must be renamed for parity to
+actually run. The manifest records whether parity ran, against which schematic,
+or why it did not.
+
 ## Exit codes
 
 - `0` — clean (and, for `package`, packaged)
 - `2` — blocked; at least one blocking finding, no files written
 - `3` — the gate could not run: kicad-cli missing, unreachable or too old, the
-  board or its schematic missing, unreadable DRC output, or a usage error.
+  board missing, `--schematic` pointing at nothing, unreadable DRC output, or a
+  usage error.
   Usage errors take `3` rather than argparse's default `2` so CI can tell a
   mistyped flag from a board that failed verification.
 

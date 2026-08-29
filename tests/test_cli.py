@@ -1,8 +1,10 @@
 import io
+import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
+from gate.kicad import KicadUnavailable
 from prefab_gate import main
 
 CLEAN = {"violations": [], "unconnected_items": [], "schematic_parity": []}
@@ -92,8 +94,6 @@ class TestCli(unittest.TestCase):
         self.assertIn("silk_overlap", cosmetic_types)
 
     def test_missing_kicad_cli_exits_three(self):
-        from gate.kicad import KicadUnavailable
-
         def boom():
             raise KicadUnavailable("kicad-cli not found")
         d = deps(CLEAN)
@@ -123,3 +123,84 @@ class TestCli(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as out:
             main(["check", "b.kicad_pcb"], deps=d)
         self.assertNotIn("zone fills", out.getvalue())
+
+
+class TestExitContract(unittest.TestCase):
+    """0 clean, 2 blocked by findings, 3 the gate could not run. Nothing else.
+
+    A traceback with exit 1, or a usage error sharing exit 2 with "this board
+    is blocked", both leave CI unable to tell a broken gate from a bad board.
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def test_a_nonexistent_board_exits_three_not_a_traceback(self):
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "nope.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 3)
+        self.assertIn("nope.kicad_pcb", out.getvalue())
+
+    def test_an_unknown_flag_exits_three_not_two(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ctx:
+            main(["check", "b.kicad_pcb", "--frobnicate"], deps=deps(CLEAN))
+        self.assertEqual(ctx.exception.code, 3)
+
+    def test_no_subcommand_exits_three_not_two(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ctx:
+            main([], deps=deps(CLEAN))
+        self.assertEqual(ctx.exception.code, 3)
+
+    def test_check_does_not_accept_an_out_it_would_ignore(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ctx:
+            main(["check", "b.kicad_pcb", "--out", "fab"], deps=deps(CLEAN))
+        self.assertEqual(ctx.exception.code, 3)
+
+    def test_malformed_drc_json_exits_three(self):
+        def bad_json(cli, board):
+            raise json.JSONDecodeError("Expecting value", "{", 0)
+        d = deps(CLEAN)
+        d["run_drc"] = bad_json
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)
+        self.assertIn("JSON", out.getvalue())
+
+    def test_an_unreadable_board_exits_three(self):
+        def boom(path):
+            raise OSError(13, "Permission denied")
+        d = deps(CLEAN)
+        d["board_hash"] = boom
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)
+        self.assertIn("Permission denied", out.getvalue())
+
+    def test_a_failed_manifest_write_exits_three(self):
+        def export(cli, board, out_dir, *args, **kwargs):
+            package = os.path.abspath("pkg")
+            # A directory where manifest.json belongs: open() raises OSError.
+            os.makedirs(os.path.join(package, "manifest.json"), exist_ok=True)
+            return package
+        d = deps(CLEAN)
+        d["export_package"] = export
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["package", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)
+        self.assertIn("could not complete", out.getvalue())
+
+    def test_an_export_failure_mid_run_exits_three(self):
+        def export(cli, board, out_dir, *args, **kwargs):
+            raise KicadUnavailable("export gerbers failed (exit 1): no plot params")
+        d = deps(CLEAN)
+        d["export_package"] = export
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["package", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)
+        self.assertIn("export gerbers failed", out.getvalue())

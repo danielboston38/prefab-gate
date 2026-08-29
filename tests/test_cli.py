@@ -9,13 +9,25 @@ CLEAN = {"violations": [], "unconnected_items": [], "schematic_parity": []}
 BLOCKED = {"violations": [{"type": "courtyards_overlap", "description": "Courtyards overlap",
                            "severity": "error", "items": [{"description": "Footprint TP1"}]}],
            "unconnected_items": [], "schematic_parity": []}
+# A warning-severity violation is cosmetic, not blocking, so the gate still
+# passes and exports — but the manifest must still record it as something it
+# knowingly waved through.
+CLEAN_WITH_COSMETIC = {
+    "violations": [{"type": "silk_overlap", "description": "Silkscreen overlaps courtyard",
+                     "severity": "warning", "items": [{"description": "Footprint R1"}]}],
+    "unconnected_items": [], "schematic_parity": []}
 
 
 def deps(drc, exported=None, record=None):
-    def export(*args, **kwargs):
+    def export(cli, board, out_dir, *args, **kwargs):
         if record is not None:
-            record.append(args)
-        return "/fab/2026-01-01-00-00-00"
+            record.append((cli, board, out_dir))
+        # Real export_package always returns an existing directory (atomic
+        # os.replace on success) — the manifest write in prefab_gate.py is
+        # unconditional on that, so the double must honor it too.
+        package = os.path.abspath("2026-01-01-00-00-00")
+        os.makedirs(package, exist_ok=True)
+        return package
     return {"locate_cli": lambda: "kicad-cli", "probe_capability": lambda cli: None,
             "run_drc": lambda cli, board: drc, "export_package": export,
             "cli_version": lambda cli: "10.0.5", "board_hash": lambda path: "same"}
@@ -59,6 +71,25 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(record), 1)
         self.assertIn("2026-01-01-00-00-00", out.getvalue())
+
+    def test_package_writes_a_real_manifest_recording_what_it_waved_through(self):
+        import json
+        record = []
+        with redirect_stdout(io.StringIO()):
+            code = main(["package", "b.kicad_pcb"],
+                        deps=deps(CLEAN_WITH_COSMETIC, record=record))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(record), 1)
+
+        package = os.path.abspath("2026-01-01-00-00-00")
+        manifest_path = os.path.join(package, "manifest.json")
+        self.assertTrue(os.path.isfile(manifest_path))
+        with open(manifest_path) as fh:
+            manifest = json.load(fh)
+
+        self.assertIs(manifest["verdict"]["passed"], True)
+        cosmetic_types = [f["type"] for f in manifest["verdict"]["cosmetic"]]
+        self.assertIn("silk_overlap", cosmetic_types)
 
     def test_missing_kicad_cli_exits_three(self):
         from gate.kicad import KicadUnavailable

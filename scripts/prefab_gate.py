@@ -63,14 +63,10 @@ def main(argv=None, deps=None) -> int:
         except KicadUnavailable as exc:
             print(str(exc))
             return 3
-        # export_package guarantees this directory exists on success; a test
-        # double for it may not touch the real filesystem at all, so guard
-        # rather than assume.
-        if os.path.isdir(package):
-            files = [os.path.join(root, f) for root, _, fs in os.walk(package) for f in fs]
-            manifest = build_manifest(args.board, d["cli_version"](cli), verdict, files, package)
-            with open(os.path.join(package, "manifest.json"), "w") as fh:
-                json.dump(manifest, fh, indent=2)
+        files = [os.path.join(root, f) for root, _, fs in os.walk(package) for f in fs]
+        manifest = build_manifest(args.board, d["cli_version"](cli), verdict, files, package)
+        with open(os.path.join(package, "manifest.json"), "w") as fh:
+            json.dump(manifest, fh, indent=2)
         print(f"\nPackage written to {package}")
 
     if args.json:

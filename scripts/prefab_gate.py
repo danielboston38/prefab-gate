@@ -77,11 +77,25 @@ def _resolve_parity(args, d) -> Parity:
         return Parity(ran=False, waived=True, reason=(
             "skipped at your request (--no-parity); the board was not compared "
             "against any schematic"))
+    conventional_path = schematic_for(args.board)
+    if args.schematic and os.path.exists(conventional_path) and (
+            os.path.abspath(args.schematic) != os.path.abspath(conventional_path)):
+        # kicad-cli would silently check the sibling instead, and the verdict,
+        # report and manifest would all name the override as the file that was
+        # verified. Refusing beats a receipt that says the wrong thing.
+        raise KicadUnavailable(
+            f"--schematic points at {args.schematic}, but {conventional_path} "
+            "exists beside the board and kicad-cli derives the schematic from "
+            "the board's basename, so it would check that one instead and the "
+            "manifest would name the wrong file. Rename the schematic you mean "
+            f"to {os.path.basename(conventional_path)}, or move the sibling "
+            "aside.")
+
     schematic = d["locate_schematic"](args.board, args.schematic)
     if schematic is not None:
         return Parity(ran=True, schematic=schematic)
 
-    conventional = schematic_for(args.board)
+    conventional = conventional_path
     candidates = d["schematic_candidates"](args.board)
     if not candidates:
         where = f"no .kicad_sch beside the board (looked for {conventional})"
@@ -171,8 +185,13 @@ def _gate(args, d) -> int:
             with open(os.path.join(staging, "manifest.json"), "w") as fh:
                 json.dump(manifest, fh, indent=2)
 
+        # The BOM comes from whatever schematic was actually located, not the
+        # board's basename. None means PCB-only: no BOM, rather than a failed
+        # export after the board files are already written.
         package = d["export_package"](cli, args.board, args.out,
-                                      on_staged=write_manifest)
+                                      on_staged=write_manifest,
+                                      schematic=d["locate_schematic"](
+                                          args.board, args.schematic))
         _note(args, f"\nPackage written to {package}")
 
     return code
@@ -187,23 +206,29 @@ def main(argv=None, deps=None) -> int:
     if not os.path.isfile(args.board):
         print(f"board not found: {args.board}\n"
               "Pass the path to a .kicad_pcb file. The gate cannot verify a board "
-              "it cannot read.")
+              "it cannot read.", file=sys.stderr)
         return 3
 
+    # Every message below goes to stderr. _emit has usually already put the
+    # report on stdout by the time these fire, so printing there would append
+    # prose to a --json document and break the consumer parsing it. It also
+    # puts runtime errors on the same stream GateArgumentParser.error already
+    # uses for usage errors.
     try:
         return _gate(args, d)
     except KicadUnavailable as exc:
-        print(str(exc))
+        print(str(exc), file=sys.stderr)
         return 3
     except json.JSONDecodeError as exc:
         # kicad-cli wrote something that is not the DRC JSON the gate parses.
         print(f"kicad-cli's DRC output could not be parsed as JSON: {exc}\n"
-              "The gate cannot judge a board it cannot read a report for.")
+              "The gate cannot judge a board it cannot read a report for.",
+              file=sys.stderr)
         return 3
     except OSError as exc:
         # Unreadable board, unwritable output directory, a manifest that could
         # not be written. All "the gate could not run", never a silent pass.
-        print(f"the gate could not complete: {exc}")
+        print(f"the gate could not complete: {exc}", file=sys.stderr)
         return 3
 
 

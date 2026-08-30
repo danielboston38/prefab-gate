@@ -14,6 +14,9 @@ from datetime import datetime
 
 from gate.kicad import KicadUnavailable
 
+# Distinguishes "caller said there is no schematic" from "caller said nothing".
+_DERIVE = object()
+
 
 def schematic_for(board: str) -> str:
     """The schematic KiCad itself pairs with this board: same stem, .kicad_sch.
@@ -72,17 +75,26 @@ def _describe(path: str) -> str:
 
 
 def export_package(cli: str, board: str, out_dir: str, runner=subprocess.run,
-                   on_staged=None) -> str:
+                   on_staged=None, schematic=_DERIVE) -> str:
     """Export a fab package into <out_dir>/<timestamp>/, atomically.
 
-    on_staged, if given, is called with the staging directory once all four
-    exports have succeeded and before the directory is published. Anything
+    on_staged, if given, is called with the staging directory once every
+    export has succeeded and before the directory is published. Anything
     that must be inside the package — the manifest — is written there, so
     the single os.replace publishes the package and its receipt together.
     A failure in the callback leaves nothing behind, exactly like a failed
     export: there is no window in which a complete-looking package exists
     without its receipt.
+
+    schematic names the file the BOM comes from. Unlike `pcb drc`, `sch export
+    bom` does take a path, so the caller passes whatever locate_schematic
+    found rather than assuming the board's basename. None means there is no
+    schematic and the BOM is skipped — a PCB-only board is a legitimate thing
+    to package, and failing on a missing sibling after three successful
+    exports reported it as a broken kicad-cli install.
     """
+    if schematic is _DERIVE:
+        schematic = schematic_for(board)
     stamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     final = os.path.join(out_dir, stamp)
     os.makedirs(out_dir, exist_ok=True)
@@ -95,9 +107,10 @@ def export_package(cli: str, board: str, out_dir: str, runner=subprocess.run,
                       "-o", os.path.join(staging, "drill"), board])
         _run(runner, [cli, "pcb", "export", "pos", "--format", "csv", "--units", "mm",
                       "--side", "both", "-o", os.path.join(staging, "cpl.csv"), board])
-        _run(runner, [cli, "sch", "export", "bom", "--group-by", "",
-                      "--fields", "Reference,Value,Footprint,Manufacturer,MPN,LCSC,Datasheet",
-                      "-o", os.path.join(staging, "bom.csv"), schematic_for(board)])
+        if schematic is not None:
+            _run(runner, [cli, "sch", "export", "bom", "--group-by", "",
+                          "--fields", "Reference,Value,Footprint,Manufacturer,MPN,LCSC,Datasheet",
+                          "-o", os.path.join(staging, "bom.csv"), schematic])
         if on_staged is not None:
             on_staged(staging)
         # os.replace happily renames onto an existing *empty* directory, which

@@ -176,3 +176,42 @@ class TestExport(unittest.TestCase):
             export_package("kicad-cli", self.board, out, runner=self.runner(),
                            on_staged=on_staged)
         self.assertEqual(os.listdir(out), [])
+
+
+class TestBomUsesTheLocatedSchematic(unittest.TestCase):
+    """The BOM must not assume a schematic at the board's basename.
+
+    export_package called schematic_for(board) unconditionally, so a PCB-only
+    board packaged with --no-parity ran three successful exports and then died
+    on a schematic that was never there -- surfacing as exit 3, which by its
+    own contract means kicad-cli is missing or too old. Unlike `pcb drc`,
+    `sch export bom` does take a path, so the located schematic can be used.
+    """
+
+    def _calls(self, **kwargs):
+        calls = []
+
+        def runner(cmd, **kw):
+            calls.append(cmd)
+
+            class R:
+                returncode, stdout, stderr = 0, "", ""
+            return R()
+        with tempfile.TemporaryDirectory() as tmp:
+            board = os.path.join(tmp, "b.kicad_pcb")
+            open(board, "w").write("(x)")
+            export_package("kicad-cli", board, os.path.join(tmp, "out"),
+                           runner=runner, **kwargs)
+        return calls
+
+    def test_a_named_schematic_is_passed_to_the_bom_export(self):
+        calls = self._calls(schematic="/elsewhere/design.kicad_sch")
+        bom = [c for c in calls if "bom" in c]
+        self.assertEqual(len(bom), 1)
+        self.assertIn("/elsewhere/design.kicad_sch", bom[0])
+
+    def test_no_schematic_means_no_bom_export_rather_than_a_failure(self):
+        calls = self._calls(schematic=None)
+        self.assertEqual([c for c in calls if "bom" in c], [])
+        # the three board-only exports still ran
+        self.assertEqual(len([c for c in calls if "export" in c]), 3)

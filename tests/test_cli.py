@@ -108,10 +108,11 @@ class TestCli(unittest.TestCase):
             raise KicadUnavailable("kicad-cli not found")
         d = deps(CLEAN)
         d["locate_cli"] = boom
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["check", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
-        self.assertIn("kicad-cli not found", out.getvalue())
+        self.assertIn("kicad-cli not found", err.getvalue())
 
     def test_json_flag_emits_machine_readable_output(self):
         import json
@@ -152,10 +153,11 @@ class TestExitContract(unittest.TestCase):
             fh.write("(kicad_pcb)")
 
     def test_a_nonexistent_board_exits_three_not_a_traceback(self):
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["check", "nope.kicad_pcb"], deps=deps(CLEAN))
         self.assertEqual(code, 3)
-        self.assertIn("nope.kicad_pcb", out.getvalue())
+        self.assertIn("nope.kicad_pcb", err.getvalue())
 
     def test_an_unknown_flag_exits_three_not_two(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as ctx:
@@ -177,20 +179,22 @@ class TestExitContract(unittest.TestCase):
             raise json.JSONDecodeError("Expecting value", "{", 0)
         d = deps(CLEAN)
         d["run_drc"] = bad_json
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["check", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
-        self.assertIn("JSON", out.getvalue())
+        self.assertIn("JSON", err.getvalue())
 
     def test_an_unreadable_board_exits_three(self):
         def boom(path):
             raise OSError(13, "Permission denied")
         d = deps(CLEAN)
         d["board_hash"] = boom
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["check", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
-        self.assertIn("Permission denied", out.getvalue())
+        self.assertIn("Permission denied", err.getvalue())
 
     def test_a_failed_manifest_write_exits_three(self):
         def export(cli, board, out_dir, *args, on_staged=None, **kwargs):
@@ -201,20 +205,22 @@ class TestExitContract(unittest.TestCase):
             return staging
         d = deps(CLEAN)
         d["export_package"] = export
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["package", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
-        self.assertIn("could not complete", out.getvalue())
+        self.assertIn("could not complete", err.getvalue())
 
     def test_an_export_failure_mid_run_exits_three(self):
         def export(cli, board, out_dir, *args, **kwargs):
             raise KicadUnavailable("export gerbers failed (exit 1): no plot params")
         d = deps(CLEAN)
         d["export_package"] = export
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["package", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
-        self.assertIn("export gerbers failed", out.getvalue())
+        self.assertIn("export gerbers failed", err.getvalue())
 
 
 class TestManifestIsAtomicWithThePackage(unittest.TestCase):
@@ -353,10 +359,11 @@ class TestParityCannotRun(unittest.TestCase):
             raise KicadUnavailable("--schematic points at '/nope', which does not exist")
         d = deps(CLEAN)
         d["locate_schematic"] = locate
-        with redirect_stdout(io.StringIO()) as out:
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
             code = main(["check", "b.kicad_pcb", "--schematic", "/nope"], deps=d)
         self.assertEqual(code, 3)
-        self.assertIn("does not exist", out.getvalue())
+        self.assertIn("does not exist", err.getvalue())
 
     def test_a_clean_run_records_the_schematic_parity_actually_used(self):
         code, data, _ = self.verdict_json(["check", "b.kicad_pcb"], deps(CLEAN))
@@ -476,3 +483,132 @@ class TestUnreadableBoardBlocks(unittest.TestCase):
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             code = main(["check", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 3)
+
+
+class TestErrorsGoToStderr(unittest.TestCase):
+    """Errors belong on stderr, so --json stdout stays a parseable document.
+
+    _emit prints the verdict before the package step runs, so an export or
+    manifest failure lands in main()'s handlers *after* the JSON is already on
+    stdout. Printing there appended prose to the document and broke the
+    consumer. GateArgumentParser.error already wrote usage errors to stderr;
+    runtime errors now agree with it rather than splitting across streams.
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def _exploding(self, exc):
+        d = deps(CLEAN)
+
+        def export(cli, board, out_dir, *args, **kwargs):
+            raise exc
+        d["export_package"] = export
+        return d
+
+    def test_json_survives_an_export_failure_after_the_verdict_is_emitted(self):
+        d = self._exploding(KicadUnavailable("cannot publish the package"))
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            code = main(["package", "--json", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)
+        json.loads(out.getvalue())
+        self.assertIn("cannot publish", err.getvalue())
+
+    def test_json_survives_a_manifest_oserror_after_the_verdict_is_emitted(self):
+        d = self._exploding(OSError("No space left on device"))
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            code = main(["package", "--json", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)
+        json.loads(out.getvalue())
+        self.assertIn("No space left", err.getvalue())
+
+    def test_board_not_found_goes_to_stderr(self):
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            code = main(["check", "nope.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 3)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("board not found", err.getvalue())
+
+
+class TestOverrideThatKicadCliWillIgnore(unittest.TestCase):
+    """--schematic cannot be honoured when a conventional sibling exists.
+
+    `kicad-cli pcb drc` derives the schematic from the board's basename and
+    takes no override, so with a sibling present it checks the sibling. The
+    gate used to record the override on the verdict and in the manifest,
+    claiming a file had been verified that kicad-cli never opened -- the
+    receipt lying about the one fact it exists to record.
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        for name in ("b.kicad_pcb", "b.kicad_sch", "elsewhere.kicad_sch"):
+            with open(name, "w") as fh:
+                fh.write("(x)")
+
+    def _deps(self):
+        d = deps(CLEAN)
+        d["locate_schematic"] = lambda board, override=None: override or "b.kicad_sch"
+        return d
+
+    def test_refuses_when_a_sibling_exists_and_the_override_differs(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            code = main(["check", "--schematic", "elsewhere.kicad_sch",
+                         "b.kicad_pcb"], deps=self._deps())
+        self.assertEqual(code, 3)
+        self.assertIn("elsewhere.kicad_sch", err.getvalue())
+        self.assertIn("b.kicad_sch", err.getvalue())
+
+    def test_an_override_equal_to_the_sibling_is_fine(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main(["check", "--schematic", "b.kicad_sch",
+                         "b.kicad_pcb"], deps=self._deps())
+        self.assertEqual(code, 0)
+
+    def test_an_override_with_no_sibling_still_works(self):
+        os.remove("b.kicad_sch")
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            code = main(["check", "--json", "--schematic", "elsewhere.kicad_sch",
+                         "b.kicad_pcb"], deps=self._deps())
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue())["parity"]["schematic"],
+                         "elsewhere.kicad_sch")
+
+
+class TestPackagingAPcbOnlyBoard(unittest.TestCase):
+    """--no-parity is advertised as accepting a PCB-only check; packaging must
+    honour that rather than dying on a schematic that was never there."""
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def test_package_no_parity_passes_none_as_the_schematic(self):
+        seen = {}
+        d = deps(CLEAN)
+        d["locate_schematic"] = lambda board, override=None: None
+        real = d["export_package"]
+
+        def export(cli, board, out_dir, *a, on_staged=None, schematic="unset", **k):
+            seen["schematic"] = schematic
+            return real(cli, board, out_dir, on_staged=on_staged)
+        d["export_package"] = export
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main(["package", "--no-parity", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 0)
+        self.assertIsNone(seen["schematic"])

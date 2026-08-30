@@ -372,3 +372,107 @@ class TestParityCannotRun(unittest.TestCase):
             manifest = json.load(fh)
         self.assertIs(manifest["verdict"]["parity"]["ran"], True)
         self.assertEqual(manifest["verdict"]["parity"]["schematic"], "b.kicad_sch")
+
+
+class TestJsonIsMachineReadable(unittest.TestCase):
+    """--json must put a parseable document on stdout and nothing else."""
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def test_json_stdout_parses_with_no_stripping(self):
+        # The text report used to be printed ahead of the JSON, so a consumer
+        # piping --json had to hunt for the document inside the prose.
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            code = main(["check", "--json", "b.kicad_pcb"], deps=deps(BLOCKED))
+        self.assertEqual(code, 2)
+        verdict = json.loads(out.getvalue())
+        self.assertFalse(verdict["passed"])
+
+    def test_zone_refill_note_does_not_pollute_json_stdout(self):
+        d = deps(CLEAN)
+        hashes = iter(["before", "after"])
+        d["board_hash"] = lambda path: next(hashes)
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            code = main(["check", "--json", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 0)
+        json.loads(out.getvalue())
+        self.assertIn("refilling updated the zone fills", err.getvalue())
+
+    def test_package_path_does_not_pollute_json_stdout(self):
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            code = main(["package", "--json", "b.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 0)
+        json.loads(out.getvalue())
+        self.assertIn("Package written to", err.getvalue())
+
+    def test_without_json_the_text_report_still_goes_to_stdout(self):
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 0)
+        self.assertIn("PASSED", out.getvalue())
+
+
+class TestUnreadableBoardBlocks(unittest.TestCase):
+    """A board kicad-cli cannot load must block (exit 2), never claim exit 3.
+
+    Exit 3's contract is "kicad-cli missing or too old". Returning it for a
+    corrupt or unloadable board told the user to go fix their KiCad install.
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def _deps_raising(self):
+        from gate.kicad import BoardUnreadable
+        d = deps(CLEAN)
+
+        def boom(cli, board, parity=True):
+            raise BoardUnreadable(
+                "kicad-cli DRC failed (exit 3): Failed to load board: "
+                "Unexpected 'end of input'")
+        d["run_drc"] = boom
+        return d
+
+    def test_exits_two_not_three(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main(["check", "b.kicad_pcb"], deps=self._deps_raising())
+        self.assertEqual(code, 2)
+
+    def test_reports_it_as_a_blocking_finding(self):
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            main(["check", "--json", "b.kicad_pcb"], deps=self._deps_raising())
+        verdict = json.loads(out.getvalue())
+        self.assertFalse(verdict["passed"])
+        self.assertEqual([f["type"] for f in verdict["blocking"]], ["board_unreadable"])
+
+    def test_package_writes_nothing(self):
+        record = []
+        d = self._deps_raising()
+        d["export_package"] = lambda *a, **k: record.append(a) or "pkg"
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main(["package", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 2)
+        self.assertEqual(record, [])
+
+    def test_a_genuinely_missing_kicad_cli_still_exits_three(self):
+        d = deps(CLEAN)
+
+        def missing():
+            raise KicadUnavailable("kicad-cli not found")
+        d["locate_cli"] = missing
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main(["check", "b.kicad_pcb"], deps=d)
+        self.assertEqual(code, 3)

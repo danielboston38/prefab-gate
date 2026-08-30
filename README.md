@@ -47,7 +47,10 @@ or why it did not.
 ## Exit codes
 
 - `0` — clean (and, for `package`, packaged)
-- `2` — blocked; at least one blocking finding, no files written
+- `2` — blocked; at least one blocking finding, no files written. This includes
+  a board kicad-cli runs but cannot load (a truncated file, items on undefined
+  layers): that is a `board_unreadable` finding about the board, not a broken
+  install, so it belongs here rather than in `3`.
 - `3` — the gate could not run: kicad-cli missing, unreachable or too old, the
   board missing, `--schematic` pointing at nothing, unreadable DRC output, or a
   usage error.

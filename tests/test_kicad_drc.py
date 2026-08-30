@@ -51,14 +51,20 @@ class TestRunDrc(unittest.TestCase):
         for flag in ("--severity-all", "--refill-zones", "--save-board"):
             self.assertIn(flag, cmd)
 
-    def test_raises_when_kicad_cli_fails(self):
+    def test_raises_board_unreadable_when_kicad_cli_fails(self):
+        # Was KicadUnavailable, which routed a board kicad-cli merely refused
+        # to the exit-3 "your KiCad install is broken" path. A corpus sweep
+        # found four such boards: two 2-byte stubs and two with items on
+        # undefined layers.
+        from gate.kicad import BoardUnreadable
+
         def failing(cmd, **kwargs):
             class R:
                 pass
             r = R()
             r.returncode, r.stdout, r.stderr = 1, "", "boom"
             return r
-        with self.assertRaises(KicadUnavailable):
+        with self.assertRaises(BoardUnreadable):
             run_drc("kicad-cli", "board.kicad_pcb", runner=failing)
 
 
@@ -88,3 +94,26 @@ class TestParityFailureIsReported(unittest.TestCase):
             "kicad-cli", "board.kicad_pcb", parity=False,
             runner=fake_runner([], stderr=PARITY_FAILED_STDERR))
         self.assertEqual(parity_error, "")
+
+
+class TestBoardKicadCliRejects(unittest.TestCase):
+    """kicad-cli running and refusing the board is bad input, not a bad environment.
+
+    locate_cli and probe_capability have already established that kicad-cli
+    exists and supports every flag by the time run_drc is called, so a non-zero
+    exit here means it ran and rejected this board.
+    """
+
+    def test_non_zero_exit_raises_board_unreadable(self):
+        from gate.kicad import BoardUnreadable
+        calls = []
+        runner = fake_runner(calls, returncode=3, stderr=(
+            "Failed to load board: One or more items were found on undefined "
+            "layers (Rescue). Open the board in the PCB Editor to resolve."))
+        with self.assertRaises(BoardUnreadable) as caught:
+            run_drc("kicad-cli", "b.kicad_pcb", runner=runner)
+        self.assertIn("undefined layers", str(caught.exception))
+
+    def test_board_unreadable_is_not_an_environment_error(self):
+        from gate.kicad import BoardUnreadable
+        self.assertFalse(issubclass(BoardUnreadable, KicadUnavailable))

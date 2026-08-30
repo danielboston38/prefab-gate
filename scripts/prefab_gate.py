@@ -11,9 +11,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gate.classify import classify                      # noqa: E402
 from gate.export import (export_package, locate_schematic,  # noqa: E402
                          schematic_candidates, schematic_for)
-from gate.kicad import KicadUnavailable, locate_cli, probe_capability, run_drc  # noqa: E402
+from gate.kicad import (BoardUnreadable, KicadUnavailable,  # noqa: E402
+                        locate_cli, probe_capability, run_drc)
 from gate.manifest import build_manifest, sha256        # noqa: E402
-from gate.model import Parity                           # noqa: E402
+from gate.model import Finding, Parity, Verdict          # noqa: E402
 from gate.report import render_json, render_text        # noqa: E402
 
 
@@ -97,6 +98,36 @@ def _resolve_parity(args, d) -> Parity:
         f"{os.path.basename(conventional)} for parity to actually run."))
 
 
+def _emit(args, verdict) -> None:
+    """stdout carries the report — JSON when asked for, text otherwise.
+
+    Never both. --json used to append the JSON *after* the full text report,
+    so anything piping stdout into a parser got up to 252 KB of prose first.
+    """
+    print(render_json(verdict) if args.json else render_text(verdict))
+
+
+def _note(args, message: str) -> None:
+    """Chatter that is not the report. Under --json it must leave stdout alone."""
+    print(message, file=sys.stderr if args.json else sys.stdout)
+
+
+def _unreadable(exc, parity) -> Verdict:
+    """A board kicad-cli cannot load is a blocking finding, not an exit-3.
+
+    It travels as a normal verdict so the report, --json and the exit code all
+    describe it the same way everything else is described.
+    """
+    verdict = Verdict(parity=Parity(
+        ran=False, schematic=parity.schematic,
+        reason="the board could not be loaded, so parity never ran"))
+    verdict.blocking.append(Finding(
+        kind="board", type="board_unreadable", description=str(exc),
+        severity="error", items=(), blocking=True,
+        reason="kicad-cli ran and could not load this board"))
+    return verdict
+
+
 def _gate(args, d) -> int:
     cli = d["locate_cli"]()
     d["probe_capability"](cli)
@@ -104,7 +135,11 @@ def _gate(args, d) -> int:
     # the resulting git diff is expected rather than mysterious.
     parity = _resolve_parity(args, d)
     before = d["board_hash"](args.board)
-    drc, parity_error = d["run_drc"](cli, args.board, parity=parity.ran)
+    try:
+        drc, parity_error = d["run_drc"](cli, args.board, parity=parity.ran)
+    except BoardUnreadable as exc:
+        _emit(args, _unreadable(exc, parity))
+        return 2
     if parity.ran and parity_error:
         # kicad-cli exits 0 and emits an empty parity list when it could not
         # load the schematic. The violations in the same report are still
@@ -115,11 +150,11 @@ def _gate(args, d) -> int:
             "anyway — its exit code cannot be trusted here. It said: "
             f"{parity_error.strip()}"))
     if d["board_hash"](args.board) != before:
-        print(f"Note: refilling updated the zone fills in {args.board} — "
-              "the board file has been modified and should be committed.\n")
+        _note(args, f"Note: refilling updated the zone fills in {args.board} — "
+                    "the board file has been modified and should be committed.\n")
 
     verdict = classify(drc, strict=args.strict, parity=parity)
-    print(render_text(verdict))
+    _emit(args, verdict)
 
     code = 0 if verdict.passed else 2
     if verdict.passed and args.command == "package":
@@ -138,11 +173,8 @@ def _gate(args, d) -> int:
 
         package = d["export_package"](cli, args.board, args.out,
                                       on_staged=write_manifest)
-        print(f"\nPackage written to {package}")
+        _note(args, f"\nPackage written to {package}")
 
-    if args.json:
-        print()
-        print(render_json(verdict))
     return code
 
 

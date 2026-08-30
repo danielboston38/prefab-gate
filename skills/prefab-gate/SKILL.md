@@ -16,7 +16,11 @@ directory the board lives in.
 Exit codes: `0` clean and packaged · `2` blocked by findings, no files written ·
 `3` the gate could not run (kicad-cli missing or too old, board path wrong,
 `--schematic` pointing at nothing, or a usage error). Only `2` is a verdict
-about the board.
+about the board — including a board kicad-cli cannot load at all, which is a
+`board_unreadable` finding rather than an environment failure.
+
+`--json` puts the verdict document on stdout and nothing else; the zone-refill
+note and the package path go to stderr, so stdout can be piped to a parser.
 
 Use `check` instead of `package` to verify without producing a package. `check`
 still runs with `--refill-zones --save-board`, so it may rewrite the board's

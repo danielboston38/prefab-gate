@@ -50,6 +50,17 @@ class KicadUnavailable(Exception):
     """kicad-cli is missing, too old, or unable to do what the gate needs."""
 
 
+class BoardUnreadable(Exception):
+    """kicad-cli ran and refused the board — bad input, not a bad environment.
+
+    Deliberately not a KicadUnavailable: by the time run_drc is called,
+    locate_cli and probe_capability have already established that kicad-cli
+    exists and supports every flag the gate passes. A non-zero exit from the
+    DRC itself is therefore about this board, and telling the user to go fix
+    their KiCad install would send them somewhere there is nothing to fix.
+    """
+
+
 def locate_cli(env=None, which=shutil.which, exists=os.path.exists,
                globber=glob.glob) -> str:
     env = os.environ if env is None else env
@@ -115,7 +126,7 @@ def run_drc(cli: str, board: str, runner=subprocess.run, parity: bool = True):
         result = runner(cmd, capture_output=True, text=True)
         stderr = (getattr(result, "stderr", "") or "").strip()
         if getattr(result, "returncode", 0) != 0:
-            raise KicadUnavailable(
+            raise BoardUnreadable(
                 f"kicad-cli DRC failed (exit {result.returncode}): {stderr}")
         parity_error = (stderr if parity and
                         any(m in stderr for m in PARITY_FAILED_MARKERS) else "")

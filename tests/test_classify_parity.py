@@ -112,3 +112,57 @@ class TestParityNotRun(unittest.TestCase):
 
     def test_the_default_is_that_parity_ran(self):
         self.assertTrue(classify(drc([])).parity.ran)
+
+
+class TestStringsHarvestedFromTheCorpusSweep(unittest.TestCase):
+    """The three parity messages a 303-board sweep found unclassified.
+
+    Each blocked with "unrecognised parity description", which tells the user
+    the classifier is incomplete when in fact the board has a real defect. The
+    verdicts below are chosen from what the sweep showed the messages attach to.
+    """
+
+    def test_extra_footprint_blocks(self):
+        # 1295 items across 90 boards, and they are real parts: 234 D, 118 S,
+        # 83 MX, 77 C, 50 R, 17 U. A component on the board that the schematic
+        # does not have is the mirror of "Missing footprint", already blocking.
+        v = classify(drc([parity("Extra footprint", "extra_footprint")]))
+        self.assertEqual(len(v.blocking), 1)
+        self.assertEqual(v.blocking[0].reason, "structural parity mismatch")
+
+    def test_duplicate_footprints_blocks(self):
+        # Two footprints sharing a reference: the fab BOM and the placement
+        # file cannot tell them apart.
+        v = classify(drc([parity("Duplicate footprints", "duplicate_footprints")]))
+        self.assertEqual(len(v.blocking), 1)
+        self.assertEqual(v.blocking[0].reason, "structural parity mismatch")
+
+    def test_footprint_filters_mismatch_is_cosmetic(self):
+        # A footprint filter is a symbol-library hint about which footprints the
+        # symbol's author anticipated, not a fact about the board. Choosing a
+        # compatible footprint outside that list is normal practice.
+        v = classify(drc([parity(
+            "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical doesn't "
+            "match symbol's footprint filters (Connector*:*_1x??-1MP*)",
+            "footprint_filters_mismatch")]))
+        self.assertEqual(len(v.cosmetic), 1)
+        self.assertTrue(v.passed)
+
+    def test_filters_message_is_not_caught_by_the_footprint_mismatch_rule(self):
+        # "doesn't match footprint given by symbol" and "doesn't match symbol's
+        # footprint filters" are different messages; the blocking list is
+        # checked first, so this guards against the wrong one winning.
+        v = classify(drc([parity(
+            "X doesn't match symbol's footprint filters (Y)",
+            "footprint_filters_mismatch")]))
+        self.assertEqual(len(v.blocking), 0)
+
+    def test_none_of_the_three_still_reports_as_unrecognised(self):
+        for desc, type_ in (("Extra footprint", "extra_footprint"),
+                            ("Duplicate footprints", "duplicate_footprints"),
+                            ("X doesn't match symbol's footprint filters (Y)",
+                             "footprint_filters_mismatch")):
+            with self.subTest(type_):
+                v = classify(drc([parity(desc, type_)]))
+                for f in v.blocking + v.cosmetic:
+                    self.assertNotIn("unrecognised", f.reason)

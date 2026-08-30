@@ -18,12 +18,27 @@ BLOCKING_PARITY = (
     "Pad missing net given by schematic",
     "No corresponding pin found in schematic",
     "No pad found for pin",
+    # Harvested from a 303-board corpus sweep, 2026-08-30. The board carries a
+    # part the schematic does not — the mirror of "Missing footprint" above.
+    # Not decoration: of 1295 items the sweep saw, the designators were 234 D,
+    # 118 S, 83 MX, 77 C, 50 R, 17 U. Those get fabricated and assembled while
+    # absent from the schematic-derived BOM.
+    "Extra footprint",
+    # Same sweep. Two footprints share a reference designator, so neither the
+    # fab BOM nor the placement file can tell them apart.
+    "Duplicate footprints",
 )
 COSMETIC_PARITY = (
     "Missing symbol field",
     "'Exclude from bill of materials' settings differ",
     "doesn't match symbol value",
     "differs (PCB:",
+    # Same sweep. A footprint filter is the symbol author's list of footprints
+    # they anticipated, not a fact about this board; picking a compatible
+    # footprint outside that list is ordinary practice. Distinct from
+    # "doesn't match footprint given by symbol" in BLOCKING_PARITY, which is
+    # the symbol's actual assigned footprint disagreeing with the board.
+    "doesn't match symbol's footprint filters",
 )
 
 

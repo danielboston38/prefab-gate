@@ -1,5 +1,5 @@
 import unittest
-from gate.classify import classify
+from gate.classify import classify, validate_report, ReportInvalid
 
 
 def drc(violations=(), unconnected=(), parity=()):
@@ -89,3 +89,72 @@ class TestUnknownSeverity(unittest.TestCase):
     def test_finding_records_affected_items(self):
         v = classify(drc(violations=[violation("error")]))
         self.assertEqual(v.blocking[0].items, ("Pad U1.2",))
+
+
+class TestReportValidation(unittest.TestCase):
+    """A section that is absent is not a section that found nothing.
+
+    classify read its sections with drc.get(key, []), so a report missing
+    "violations" classified as cleanly as one containing an empty list. For a
+    gate whose entire claim is "the checks ran", absence of evidence was being
+    read as evidence of absence — and in `package` mode that publishes a fab
+    package. Presence of the key is the evidence that the check completed, so
+    it is now required rather than defaulted.
+
+    KiCad 10.0.6 emits all three sections on every run, including when
+    --schematic-parity is not passed, so nothing valid is rejected by this.
+    """
+
+    def _valid(self):
+        return {"violations": [], "unconnected_items": [], "schematic_parity": []}
+
+    def test_a_complete_report_with_empty_sections_is_accepted(self):
+        validate_report(self._valid(), parity_requested=True)
+
+    def test_missing_violations_is_rejected(self):
+        report = self._valid()
+        del report["violations"]
+        with self.assertRaises(ReportInvalid) as caught:
+            validate_report(report, parity_requested=True)
+        self.assertIn("violations", str(caught.exception))
+
+    def test_missing_unconnected_items_is_rejected(self):
+        report = self._valid()
+        del report["unconnected_items"]
+        with self.assertRaises(ReportInvalid):
+            validate_report(report, parity_requested=True)
+
+    def test_missing_schematic_parity_is_rejected_when_parity_was_requested(self):
+        report = self._valid()
+        del report["schematic_parity"]
+        with self.assertRaises(ReportInvalid):
+            validate_report(report, parity_requested=True)
+
+    def test_missing_schematic_parity_is_allowed_when_it_was_not_requested(self):
+        report = self._valid()
+        del report["schematic_parity"]
+        validate_report(report, parity_requested=False)
+
+    def test_an_empty_object_is_rejected(self):
+        with self.assertRaises(ReportInvalid):
+            validate_report({}, parity_requested=True)
+
+    def test_null_sections_are_rejected(self):
+        for key in ("violations", "unconnected_items", "schematic_parity"):
+            with self.subTest(key=key):
+                report = self._valid()
+                report[key] = None
+                with self.assertRaises(ReportInvalid):
+                    validate_report(report, parity_requested=True)
+
+    def test_non_list_sections_are_rejected(self):
+        for value in ({}, "", "none", 0):
+            with self.subTest(value=value):
+                report = self._valid()
+                report["violations"] = value
+                with self.assertRaises(ReportInvalid):
+                    validate_report(report, parity_requested=True)
+
+    def test_a_report_that_is_not_an_object_at_all_is_rejected(self):
+        with self.assertRaises(ReportInvalid):
+            validate_report([], parity_requested=True)

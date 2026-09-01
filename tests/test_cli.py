@@ -671,3 +671,60 @@ class TestSoleSchematicUnderAnotherName(unittest.TestCase):
         parity = json.loads(out.getvalue())["parity"]
         self.assertFalse(parity["ran"])
         self.assertNotEqual(parity["schematic"], "my_actual_design.kicad_sch")
+
+
+class TestATruncatedReportIsNotACleanBoard(unittest.TestCase):
+    """An incomplete report is a gate failure, never a pass.
+
+    The distinction the exit contract turns on: 2 means the gate checked this
+    board and rejected it, 3 means the gate could not check it. A report with
+    sections missing is the second, and used to be reported as neither — it
+    came out as 0.
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+
+    def _run(self, report, argv=("check", "b.kicad_pcb")):
+        with redirect_stdout(io.StringIO()) as out, \
+                redirect_stderr(io.StringIO()) as err:
+            code = main(list(argv), deps=deps(report))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_report_missing_violations_exits_three(self):
+        code, out, err = self._run({"unconnected_items": [],
+                                    "schematic_parity": []})
+        self.assertEqual(code, 3)
+        self.assertNotIn("PASSED", out)
+        self.assertIn("violations", err)
+
+    def test_an_empty_report_exits_three(self):
+        code, out, _ = self._run({})
+        self.assertEqual(code, 3)
+        self.assertNotIn("PASSED", out)
+
+    def test_a_report_missing_parity_exits_three(self):
+        code, _, _ = self._run({"violations": [], "unconnected_items": []})
+        self.assertEqual(code, 3)
+
+    def test_no_package_is_published_from_a_truncated_report(self):
+        record = []
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = main(["package", "b.kicad_pcb"],
+                        deps=deps({}, record=record))
+        self.assertEqual(code, 3)
+        self.assertEqual(record, [])
+
+    def test_no_parity_does_not_demand_a_parity_section(self):
+        # --no-parity omits --schematic-parity, so a report without that
+        # section is exactly what was asked for.
+        code, out, _ = self._run({"violations": [], "unconnected_items": []},
+                                 argv=("check", "b.kicad_pcb", "--no-parity"))
+        self.assertEqual(code, 0)
+        self.assertIn("PASSED", out)

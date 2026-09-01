@@ -8,7 +8,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from gate.classify import classify                      # noqa: E402
+from gate.classify import (ReportInvalid, classify,      # noqa: E402
+                           validate_report)
 from gate.export import (export_package, locate_schematic,  # noqa: E402
                          schematic_candidates, schematic_for)
 from gate.kicad import (BoardUnreadable, KicadUnavailable,  # noqa: E402
@@ -165,6 +166,10 @@ def _gate(args, d) -> int:
     except BoardUnreadable as exc:
         _emit(args, _unreadable(exc, parity))
         return 2
+    # Before anything is judged: every section the verdict is built from has to
+    # be there. parity.ran is still the *requested* value at this point, which
+    # is what decides whether a parity section was asked for.
+    validate_report(drc, parity_requested=parity.ran)
     if parity.ran and parity_error:
         # kicad-cli exits 0 and emits an empty parity list when it could not
         # load the schematic. The violations in the same report are still
@@ -229,6 +234,11 @@ def main(argv=None, deps=None) -> int:
         return _gate(args, d)
     except KicadUnavailable as exc:
         print(str(exc), file=sys.stderr)
+        return 3
+    except ReportInvalid as exc:
+        # The gate could not check, which is not the same as checking and
+        # failing. Exit 3 keeps that apart from a blocked board's exit 2.
+        print(f"{exc}", file=sys.stderr)
         return 3
     except json.JSONDecodeError as exc:
         # kicad-cli wrote something that is not the DRC JSON the gate parses.

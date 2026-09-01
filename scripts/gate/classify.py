@@ -42,6 +42,52 @@ COSMETIC_PARITY = (
 )
 
 
+class ReportInvalid(Exception):
+    """kicad-cli's report is missing a section the gate has to judge.
+
+    Not a blocking finding: a blocked board is one the gate checked and
+    rejected, whereas this is the gate being unable to check at all. The two
+    have to stay distinguishable, so this takes the gate-error exit.
+    """
+
+
+# Sections whose presence is the evidence that the check completed.
+REQUIRED_SECTIONS = ("violations", "unconnected_items")
+
+
+def validate_report(drc, *, parity_requested: bool) -> None:
+    """Require every section the verdict is built from, before building it.
+
+    classify used to read its sections with drc.get(key, []), which made an
+    absent section indistinguishable from one that found nothing — so a
+    truncated report classified as a clean board and, under `package`,
+    published a fab package. Nothing about "no result was supplied" is
+    evidence of "zero findings".
+
+    schematic_parity is required only when parity was actually requested.
+    KiCad 10.0.6 emits it either way, so this rejects nothing valid; it just
+    declines to demand a section the gate did not ask for.
+    """
+    if not isinstance(drc, dict):
+        raise ReportInvalid(
+            f"kicad-cli's DRC report is {type(drc).__name__}, not an object. "
+            "The gate cannot judge a board it has no report for.")
+    required = REQUIRED_SECTIONS + (
+        ("schematic_parity",) if parity_requested else ())
+    for key in required:
+        if key not in drc:
+            raise ReportInvalid(
+                f"kicad-cli's DRC report has no {key!r} section, so there is no "
+                "evidence that check ran. An absent section is not an empty "
+                "one. Re-run the DRC; if it keeps happening, the kicad-cli "
+                "writing this report is not one the gate can vouch for.")
+        if not isinstance(drc[key], list):
+            raise ReportInvalid(
+                f"kicad-cli's DRC report has {key!r} as "
+                f"{type(drc[key]).__name__}, not a list, so the gate cannot "
+                "tell what that check found.")
+
+
 def _items(entry):
     return tuple(i.get("description", "") for i in entry.get("items", []))
 

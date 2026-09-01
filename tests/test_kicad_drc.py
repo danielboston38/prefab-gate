@@ -8,8 +8,22 @@ PARITY_FAILED_STDERR = (
     "Failed to fetch schematic netlist for parity tests.\n"
     "Schematic parity tests require a fully annotated schematic.\n")
 
+# kicad-cli's real stdout. Verified against KiCad 10.0.6: the parity line is
+# printed whenever the parity tests ran — including when they ran and found
+# nothing — and is absent entirely when they could not run. The default here is
+# the "parity ran" case, because that is what a plain successful DRC looks like;
+# a double that omitted it was claiming kicad-cli says nothing about parity.
+STDOUT_PARITY_RAN = ("Found 0 violations\n"
+                     "Found 0 unconnected items\n"
+                     "Found 0 schematic parity issues\n"
+                     "Saved DRC Report to drc.json\n")
+STDOUT_PARITY_DID_NOT_RUN = ("Found 0 violations\n"
+                             "Found 0 unconnected items\n"
+                             "Saved DRC Report to drc.json\n")
 
-def fake_runner(calls, payload=None, returncode=0, stderr=""):
+
+def fake_runner(calls, payload=None, returncode=0, stderr="",
+                stdout=STDOUT_PARITY_RAN):
     def _run(cmd, **kwargs):
         calls.append(cmd)
         out = cmd[cmd.index("-o") + 1]
@@ -21,7 +35,7 @@ def fake_runner(calls, payload=None, returncode=0, stderr=""):
         class R:
             pass
         r = R()
-        r.returncode, r.stdout, r.stderr = returncode, "", stderr
+        r.returncode, r.stdout, r.stderr = returncode, stdout, stderr
         return r
     return _run
 
@@ -78,21 +92,23 @@ class TestParityFailureIsReported(unittest.TestCase):
     def test_the_marker_is_returned_even_on_exit_zero(self):
         drc, parity_error = run_drc(
             "kicad-cli", "board.kicad_pcb",
-            runner=fake_runner([], stderr=PARITY_FAILED_STDERR))
+            runner=fake_runner([], stderr=PARITY_FAILED_STDERR,
+                               stdout=STDOUT_PARITY_DID_NOT_RUN))
         self.assertEqual(drc["schematic_parity"], [])
         self.assertIn("Failed to fetch schematic netlist", parity_error)
 
     def test_the_annotation_marker_alone_is_reported_too(self):
         _, parity_error = run_drc(
             "kicad-cli", "board.kicad_pcb",
-            runner=fake_runner([], stderr=(
+            runner=fake_runner([], stdout=STDOUT_PARITY_DID_NOT_RUN, stderr=(
                 "Schematic parity tests require a fully annotated schematic.")))
         self.assertTrue(parity_error)
 
     def test_the_marker_is_ignored_when_parity_was_not_requested(self):
         _, parity_error = run_drc(
             "kicad-cli", "board.kicad_pcb", parity=False,
-            runner=fake_runner([], stderr=PARITY_FAILED_STDERR))
+            runner=fake_runner([], stderr=PARITY_FAILED_STDERR,
+                               stdout=STDOUT_PARITY_DID_NOT_RUN))
         self.assertEqual(parity_error, "")
 
 
@@ -117,3 +133,52 @@ class TestBoardKicadCliRejects(unittest.TestCase):
     def test_board_unreadable_is_not_an_environment_error(self):
         from gate.kicad import BoardUnreadable
         self.assertFalse(issubclass(BoardUnreadable, KicadUnavailable))
+
+
+class TestParityMustBeProvenToHaveRun(unittest.TestCase):
+    """Absence of a failure message is not evidence that parity ran.
+
+    kicad-cli exits 0 and writes "schematic_parity": [] both when parity ran
+    and found nothing and when it could not run at all, so the JSON alone
+    cannot tell them apart. The one signal that does is on stdout: verified
+    against KiCad 10.0.6, "Found <n> schematic parity issues" is printed
+    whenever the tests ran, including for n = 0, and is absent when they did
+    not. Keying on that inverts the invariant — parity has to be affirmed,
+    rather than its failure being recognised from wording that is not an API.
+    """
+
+    def test_unrecognised_failure_wording_still_fails_closed(self):
+        # The regression the marker list could not survive: KiCad rewords its
+        # diagnostic, keeps exiting 0, and keeps emitting an empty list.
+        _, parity_error = run_drc(
+            "kicad-cli", "board.kicad_pcb",
+            runner=fake_runner([], stdout=STDOUT_PARITY_DID_NOT_RUN,
+                               stderr="Unable to obtain schematic netlist.\n"))
+        self.assertTrue(parity_error)
+        self.assertIn("Unable to obtain schematic netlist", parity_error)
+
+    def test_silence_fails_closed_with_an_explanation(self):
+        # No parity line and nothing on stderr either. The gate still may not
+        # call that a clean parity result, and the reason it reports cannot be
+        # an empty string.
+        _, parity_error = run_drc(
+            "kicad-cli", "board.kicad_pcb",
+            runner=fake_runner([], stdout=STDOUT_PARITY_DID_NOT_RUN, stderr=""))
+        self.assertTrue(parity_error)
+
+    def test_parity_that_ran_and_found_nothing_is_a_pass(self):
+        # The case that decides the design: a genuinely clean board must not
+        # be reported as unverified.
+        _, parity_error = run_drc(
+            "kicad-cli", "board.kicad_pcb",
+            runner=fake_runner([], stdout=STDOUT_PARITY_RAN))
+        self.assertEqual(parity_error, "")
+
+    def test_parity_that_ran_and_found_issues_is_a_pass(self):
+        _, parity_error = run_drc(
+            "kicad-cli", "board.kicad_pcb",
+            runner=fake_runner([], stdout=(
+                "Found 8 violations\n"
+                "Found 0 unconnected items\n"
+                "Found 27 schematic parity issues\n")))
+        self.assertEqual(parity_error, "")

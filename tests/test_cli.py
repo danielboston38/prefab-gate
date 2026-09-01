@@ -309,6 +309,10 @@ class TestParityCannotRun(unittest.TestCase):
         self.assertIn("b2.kicad_sch", reason)
 
     def test_the_schematic_flag_is_passed_through_to_the_locator(self):
+        # The flag still reaches the locator — it chooses the BOM source. What
+        # it cannot do is make parity run: `kicad-cli pcb drc` derives the
+        # schematic from the board's basename, verified against KiCad 10.0.6,
+        # so this test used to assert a pass the tool never actually delivered.
         seen = {}
 
         def locate(board, override=None):
@@ -318,9 +322,10 @@ class TestParityCannotRun(unittest.TestCase):
         d["locate_schematic"] = locate
         code, data, _ = self.verdict_json(
             ["check", "b.kicad_pcb", "--schematic", "elsewhere/s.kicad_sch"], d)
-        self.assertEqual(code, 0)
         self.assertEqual(seen["override"], "elsewhere/s.kicad_sch")
-        self.assertEqual(data["parity"]["schematic"], "elsewhere/s.kicad_sch")
+        self.assertEqual(code, 2)
+        self.assertIs(data["parity"]["ran"], False)
+        self.assertNotEqual(data["parity"]["schematic"], "elsewhere/s.kicad_sch")
 
     def test_no_parity_downgrades_to_cosmetic_but_still_records_it(self):
         code, data, text = self.verdict_json(["check", "b.kicad_pcb", "--no-parity"], deps(CLEAN))
@@ -575,14 +580,18 @@ class TestOverrideThatKicadCliWillIgnore(unittest.TestCase):
                          "b.kicad_pcb"], deps=self._deps())
         self.assertEqual(code, 0)
 
-    def test_an_override_with_no_sibling_still_works(self):
+    def test_an_override_with_no_sibling_is_accepted_but_cannot_run_parity(self):
+        # Not refused — the override is a legitimate BOM source. But it is not
+        # a file kicad-cli will read for parity, so the honest answer is "parity
+        # did not run", not a pass naming a schematic nothing checked.
         os.remove("b.kicad_sch")
         with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
             code = main(["check", "--json", "--schematic", "elsewhere.kicad_sch",
                          "b.kicad_pcb"], deps=self._deps())
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out.getvalue())["parity"]["schematic"],
-                         "elsewhere.kicad_sch")
+        self.assertEqual(code, 2)
+        parity = json.loads(out.getvalue())["parity"]
+        self.assertIs(parity["ran"], False)
+        self.assertIn("b.kicad_sch", parity["reason"])
 
 
 class TestPackagingAPcbOnlyBoard(unittest.TestCase):
@@ -612,3 +621,53 @@ class TestPackagingAPcbOnlyBoard(unittest.TestCase):
             code = main(["package", "--no-parity", "b.kicad_pcb"], deps=d)
         self.assertEqual(code, 0)
         self.assertIsNone(seen["schematic"])
+
+
+class TestSoleSchematicUnderAnotherName(unittest.TestCase):
+    """A schematic KiCad will not read is not a schematic parity can use.
+
+    locate_schematic falls back to a sole .kicad_sch beside the board even
+    when it is not named after the board, because roughly one project in five
+    has no conventional sibling and the BOM export can use any path. But
+    `kicad-cli pcb drc` derives the schematic from the board's basename and
+    offers no way to point it elsewhere, so parity against that file cannot
+    happen. Claiming ran=True made the manifest name a file that was never
+    checked — a receipt asserting something untrue, which is worse than no
+    receipt. Reproduced against KiCad 10.0.6: it prints a failure to stderr,
+    exits 0 and writes "schematic_parity": [].
+    """
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        os.chdir(self._tmp.name)
+        self.addCleanup(os.chdir, self._prev_cwd)
+        with open("b.kicad_pcb", "w") as fh:
+            fh.write("(kicad_pcb)")
+        with open("my_actual_design.kicad_sch", "w") as fh:
+            fh.write("(kicad_sch)")
+
+    def _deps(self):
+        d = deps(CLEAN)
+        d["locate_schematic"] = (
+            lambda board, override=None: "my_actual_design.kicad_sch")
+        return d
+
+    def test_parity_is_blocking_rather_than_silently_clean(self):
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=self._deps())
+        self.assertEqual(code, 2)
+        self.assertIn("BLOCKED", out.getvalue())
+
+    def test_the_reason_names_the_rename_that_would_fix_it(self):
+        with redirect_stdout(io.StringIO()) as out:
+            main(["check", "b.kicad_pcb"], deps=self._deps())
+        self.assertIn("b.kicad_sch", out.getvalue())
+
+    def test_the_receipt_does_not_name_it_as_verified(self):
+        with redirect_stdout(io.StringIO()) as out:
+            main(["check", "b.kicad_pcb", "--json"], deps=self._deps())
+        parity = json.loads(out.getvalue())["parity"]
+        self.assertFalse(parity["ran"])
+        self.assertNotEqual(parity["schematic"], "my_actual_design.kicad_sch")

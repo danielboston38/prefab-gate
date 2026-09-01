@@ -12,15 +12,20 @@ import tempfile
 REQUIRED_FLAGS = ("--format", "--schematic-parity", "--refill-zones",
                   "--save-board", "--severity-all")
 
-# kicad-cli prints these to stderr and *still exits 0* when it cannot load the
-# schematic, emitting "schematic_parity": []. A board whose schematic is
-# missing, renamed or unannotated would otherwise sail through with a clean
-# parity result and no record that parity never ran — the exact fault class
-# this gate exists to catch. Its exit code cannot be trusted here.
-PARITY_FAILED_MARKERS = (
-    "Failed to fetch schematic netlist",
-    "require a fully annotated schematic",
-)
+# kicad-cli exits 0 and writes "schematic_parity": [] both when the parity
+# tests ran and found nothing and when they could not run at all, so neither
+# its exit code nor the report can tell those apart. This line on *stdout*
+# can: verified against KiCad 10.0.6, it is printed whenever the tests ran —
+# including "Found 0 schematic parity issues" for a clean board — and is
+# absent entirely when they did not run.
+#
+# Matching it makes the invariant positive: parity must be affirmed to have
+# run. The gate used to do the opposite, recognising failure from stderr
+# wording, which meant any rewording of a diagnostic that is not an API
+# turned a board whose schematic never loaded into a clean pass. Keying on
+# the affirmation reverses which way an unfamiliar kicad-cli falls: if this
+# line changes, the gate reports parity unproven instead of waving it past.
+PARITY_RAN = re.compile(r"^Found \d+ schematic parity issues", re.M)
 
 # Checked in order, after $KICAD_CLI and $PATH.
 FALLBACK_PATHS = (
@@ -101,13 +106,12 @@ def probe_capability(cli: str, runner=subprocess.run) -> None:
 def run_drc(cli: str, board: str, runner=subprocess.run, parity: bool = True):
     """One DRC pass: violations, unconnected items and parity together.
 
-    Returns (drc, parity_error). parity_error is "" on a normal run and
-    kicad-cli's stderr when it could not run the parity tests — which it does
-    while still exiting 0 and emitting "schematic_parity": [], so neither its
-    exit code nor its output can distinguish "parity found nothing" from
-    "parity never ran". The caller turns a non-empty parity_error into a
-    blocking finding; the violations in the same report are still valid, so
-    this is not an environment failure.
+    Returns (drc, parity_error). parity_error is "" only when kicad-cli
+    affirmed on stdout that the parity tests ran; otherwise it is whatever
+    kicad-cli said about why, and the caller turns it into a blocking finding.
+    Silence counts against the run rather than for it, because kicad-cli exits
+    0 and writes an empty parity list either way. The violations in the same
+    report are still valid, so this is not an environment failure.
 
     --refill-zones --save-board is intentional. A stale zone fill is the fault
     this gate exists to catch, and refilling without saving would leave the
@@ -128,7 +132,17 @@ def run_drc(cli: str, board: str, runner=subprocess.run, parity: bool = True):
         if getattr(result, "returncode", 0) != 0:
             raise BoardUnreadable(
                 f"kicad-cli DRC failed (exit {result.returncode}): {stderr}")
-        parity_error = (stderr if parity and
-                        any(m in stderr for m in PARITY_FAILED_MARKERS) else "")
+        stdout = getattr(result, "stdout", "") or ""
+        parity_error = ""
+        if parity and not PARITY_RAN.search(stdout):
+            # Report what kicad-cli said if it said anything. When it said
+            # nothing at all the gate still may not call this a pass, so the
+            # reason cannot be empty — a blank reason in the receipt would
+            # read as "parity was fine".
+            parity_error = stderr or (
+                "kicad-cli did not report running the schematic parity tests "
+                "and gave no reason. It exits 0 with an empty parity list "
+                "whether the tests passed or never ran, so this cannot be "
+                "read as a clean result.")
         with open(out) as fh:
             return json.load(fh), parity_error

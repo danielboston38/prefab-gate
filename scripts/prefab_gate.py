@@ -59,8 +59,10 @@ def _build_parser():
         p.add_argument("--json", action="store_true")
         p.add_argument("--strict", action="store_true")
         p.add_argument("--schematic", default=None, metavar="PATH",
-                       help="schematic to check parity against, when it is not "
-                            "beside the board under the board's own name")
+                       help="schematic the BOM is exported from, when it is not "
+                            "beside the board under the board's own name. It "
+                            "cannot redirect parity: kicad-cli derives that "
+                            "from the board's basename.")
         p.add_argument("--no-parity", action="store_true",
                        help="skip schematic parity (for a PCB-only design). "
                             "Recorded as a cosmetic finding, never silently.")
@@ -80,36 +82,45 @@ def _resolve_parity(args, d) -> Parity:
     conventional_path = schematic_for(args.board)
     if args.schematic and os.path.exists(conventional_path) and (
             os.path.abspath(args.schematic) != os.path.abspath(conventional_path)):
-        # kicad-cli would silently check the sibling instead, and the verdict,
-        # report and manifest would all name the override as the file that was
-        # verified. Refusing beats a receipt that says the wrong thing.
+        # kicad-cli checks the sibling regardless, so the package would pair a
+        # BOM exported from the override with a parity result from a different
+        # file. Refusing beats shipping two halves of two designs.
         raise KicadUnavailable(
             f"--schematic points at {args.schematic}, but {conventional_path} "
             "exists beside the board and kicad-cli derives the schematic from "
-            "the board's basename, so it would check that one instead and the "
-            "manifest would name the wrong file. Rename the schematic you mean "
-            f"to {os.path.basename(conventional_path)}, or move the sibling "
-            "aside.")
+            "the board's basename, so parity would check that one while the BOM "
+            "came from yours. Rename the schematic you mean to "
+            f"{os.path.basename(conventional_path)}, or move the sibling aside.")
 
     schematic = d["locate_schematic"](args.board, args.schematic)
-    if schematic is not None:
+    conventional = os.path.basename(conventional_path)
+    if schematic is not None and os.path.abspath(schematic) == os.path.abspath(
+            conventional_path):
         return Parity(ran=True, schematic=schematic)
 
-    conventional = conventional_path
-    candidates = d["schematic_candidates"](args.board)
-    if not candidates:
-        where = f"no .kicad_sch beside the board (looked for {conventional})"
+    if schematic is not None:
+        # locate_schematic's fallback found one, but it is not the file
+        # kicad-cli will read. Reporting ran=True here put a name in the
+        # receipt that nothing had checked: kicad-cli looks for the sibling,
+        # fails to find it, and exits 0 with an empty parity list anyway.
+        where = (f"the only schematic beside the board is "
+                 f"{os.path.basename(schematic)}, which kicad-cli will not "
+                 f"read for parity: it looks for {conventional}")
     else:
-        names = ", ".join(os.path.basename(c) for c in candidates)
-        where = (f"{len(candidates)} schematics beside the board and none named "
-                 f"{os.path.basename(conventional)}, so the gate will not guess "
-                 f"which one is the design: {names}")
+        candidates = d["schematic_candidates"](args.board)
+        if not candidates:
+            where = f"no .kicad_sch beside the board (looked for {conventional})"
+        else:
+            names = ", ".join(os.path.basename(c) for c in candidates)
+            where = (f"{len(candidates)} schematics beside the board and none "
+                     f"named {conventional}, so the gate will not guess which "
+                     f"one is the design: {names}")
     return Parity(ran=False, reason=(
-        f"parity could not run: {where}. Point at one with --schematic, or "
-        "accept a PCB-only check with --no-parity. Note that kicad-cli derives "
-        "the schematic from the board's basename and cannot be told otherwise, "
-        f"so a schematic under any other name must be renamed to "
-        f"{os.path.basename(conventional)} for parity to actually run."))
+        f"parity could not run: {where}. kicad-cli derives the schematic from "
+        "the board's basename and cannot be pointed elsewhere, so parity needs "
+        f"a schematic named {conventional} sitting beside the board. Rename it, "
+        "or accept a PCB-only check with --no-parity. (--schematic chooses the "
+        "schematic the BOM is exported from; it cannot redirect parity.)"))
 
 
 def _emit(args, verdict) -> None:

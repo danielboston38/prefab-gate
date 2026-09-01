@@ -14,9 +14,10 @@ the user's project, so a relative `scripts/...` path will not resolve from the
 directory the board lives in.
 
 Exit codes: `0` clean and packaged · `2` blocked by findings, no files written ·
-`3` the gate could not run (kicad-cli missing or too old, board path wrong,
-`--schematic` pointing at nothing, or a usage error). Only `2` is a verdict
-about the board — including a board kicad-cli cannot load at all, which is a
+`3` the gate could not run, or could not vouch for what it checked (kicad-cli
+missing, too old or failing its own `--help`; board path wrong; `--schematic`
+pointing at nothing; a DRC report missing sections; an input that changed after
+it was verified; or a usage error). Only `2` is a verdict about the board — including a board kicad-cli cannot load at all, which is a
 `board_unreadable` finding rather than an environment failure.
 
 `--json` puts the verdict document on stdout and nothing else; the zone-refill
@@ -42,25 +43,38 @@ switched on.
 
 ## When parity cannot run
 
-kicad-cli reports an empty parity result **and exits 0** when it cannot load the
-schematic. So "no parity issues" and "parity never ran" look identical, and the
-gate treats the second as a blocking `parity_not_run` finding.
+kicad-cli reports an empty parity result **and exits 0** whether the parity
+tests ran and found nothing or never ran at all, so those look identical in the
+report. They differ on stdout: `Found <n> schematic parity issues` appears
+whenever the tests ran, `n = 0` included, and is missing when they did not. The
+gate requires that line — parity is proven to have run, not assumed from the
+absence of an error — and anything else is a blocking `parity_not_run` finding.
 
-The gate looks for the schematic beside the board under the board's own name,
-then for a single `*.kicad_sch` in that directory. If it finds neither — or
-finds several and will not guess — you get `parity_not_run`, blocking, naming
-what it looked for.
+Parity can only run against `<board>.kicad_sch` beside the board, because
+`kicad-cli pcb drc` derives the name from the board and takes no override. A
+schematic under any other name has to be renamed. `--schematic` chooses the
+schematic the **BOM** comes from; it cannot redirect parity, and the gate
+reports `parity_not_run` rather than naming a file kicad-cli never opened.
 
-- `--schematic PATH` says where the schematic is.
+For the BOM the gate is less strict: it takes the schematic beside the board
+under the board's own name, else a single `*.kicad_sch` in that directory. When
+that is not the conventional name you get a BOM but no parity, said plainly.
+Several candidates and it will not guess at all.
+
+- `--schematic PATH` chooses the BOM's schematic. Refused when a conventional
+  sibling exists and differs — that would ship a BOM from one design with a
+  parity result from another.
 - `--no-parity` accepts a PCB-only check. The same finding is still recorded, as
   **cosmetic**, so the report and the manifest both show that parity was
   skipped. `--strict` overrides the waiver.
 
-One caveat worth knowing: `kicad-cli pcb drc` derives the schematic from the
-board's basename and has no flag to override it. A schematic under a different
-name must be **renamed** to match the board for parity to actually run;
-`--schematic` will get you past the gate's own search, but kicad-cli will then
-fail to load it and you will get `parity_not_run` anyway — correctly.
+## The package is what was checked
+
+The board and schematic are hashed after the DRC and refill are done with them,
+and must still hash the same before the exports run and before the package is
+published. Editing either mid-run gets you exit `3` and no package, rather than
+a package describing a board nothing verified. The manifest carries
+`checked_sha256` beside `sha256` for both so a reader can confirm it.
 
 ## What it does not do
 

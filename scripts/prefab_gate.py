@@ -170,9 +170,10 @@ def _unreadable(exc, parity) -> Verdict:
 def _gate(args, d) -> int:
     cli = d["locate_cli"]()
     d["probe_capability"](cli)
-    # --refill-zones --save-board can rewrite the board. Hash it either side so
-    # the resulting git diff is expected rather than mysterious.
     parity, schematic = _resolve_parity(args, d)
+    # --refill-zones --save-board can rewrite the board, so this is only good
+    # for telling the user their git diff is expected. The hash that matters
+    # is taken after the DRC, below.
     before = d["file_hash"](args.board)
     try:
         drc, parity_error = d["run_drc"](cli, args.board, parity=parity.ran)

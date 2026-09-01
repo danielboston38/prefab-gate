@@ -120,3 +120,15 @@ notes it when this happens.
 Stdlib `unittest` only — no pytest, no third-party dependencies.
 
     cd scripts && PYTHONPATH=. python3 -m unittest discover -s ../tests -p 'test_*.py' -v
+
+Everything but `test_kicad_contract.py` drives a test double and runs in well
+under a second. That file is the exception: it asserts, against the kicad-cli
+actually installed, the handful of claims about KiCad's behaviour that the
+doubles encode and that no amount of mocking can check — chiefly that
+`Found <n> schematic parity issues` really is printed whenever the parity
+tests ran, `n = 0` included, and really is absent when they could not. It adds
+about ten seconds, and skips entirely when no kicad-cli is installed.
+
+A failure there does not mean the gate is broken; it means KiCad changed and
+the doubles have become fiction. That is the one failure mode a green unit
+suite cannot report, which is why it is worth the ten seconds.

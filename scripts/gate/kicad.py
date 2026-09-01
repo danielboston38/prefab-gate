@@ -94,8 +94,27 @@ def locate_cli(env=None, which=shutil.which, exists=os.path.exists,
 
 
 def probe_capability(cli: str, runner=subprocess.run) -> None:
+    """Establish that this kicad-cli runs and supports every flag the gate passes.
+
+    The exit status is checked first, and separately from the flags. Usage text
+    from a command that failed is not evidence of anything — a broken wrapper
+    can print a perfectly good help screen on its way out — and everything
+    downstream leans on this having succeeded: run_drc treats a non-zero exit
+    as a bad board rather than a bad install precisely because the probe is
+    supposed to have ruled the install out already.
+
+    Which stream carried the help text is not part of the requirement, so both
+    are searched. Some tools print usage to stderr.
+    """
     result = runner([cli, "pcb", "drc", "--help"], capture_output=True, text=True)
-    help_text = getattr(result, "stdout", "") or ""
+    returncode = getattr(result, "returncode", 0)
+    help_text = ((getattr(result, "stdout", "") or "")
+                 + (getattr(result, "stderr", "") or ""))
+    if returncode != 0:
+        raise KicadUnavailable(
+            f"{cli} pcb drc --help failed (exit {returncode}), so the gate "
+            "cannot establish what this kicad-cli supports. It said: "
+            f"{help_text.strip()[:400] or '(nothing)'}")
     missing = [f for f in REQUIRED_FLAGS if f not in help_text]
     if missing:
         raise KicadUnavailable(

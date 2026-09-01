@@ -8,8 +8,9 @@ HELP = ("Usage: pcb drc [--help] [--output OUTPUT_FILE] [--format FORMAT] "
 
 
 class Result:
-    def __init__(self, stdout="", returncode=0):
+    def __init__(self, stdout="", returncode=0, stderr=""):
         self.stdout, self.returncode = stdout, returncode
+        self.stderr = stderr
 
 
 class TestLocate(unittest.TestCase):
@@ -55,3 +56,38 @@ class TestProbe(unittest.TestCase):
         with self.assertRaises(KicadUnavailable) as ctx:
             probe_capability("kicad-cli", runner=lambda *a, **k: Result(stripped))
         self.assertIn("--schematic-parity", str(ctx.exception))
+
+
+class TestProbeRequiresTheHelpCommandToSucceed(unittest.TestCase):
+    """Text printed by a failed command is not evidence of a capability.
+
+    The probe searched --help output for the flags it needs and never looked
+    at the exit status, so a wrapper or a broken executable that fails while
+    still printing usage was accepted. Everything after that point assumes
+    kicad-cli works, which is why a non-zero DRC exit is treated as a bad
+    board rather than a bad install — an assumption the probe has to earn.
+    """
+
+    def test_a_failed_probe_is_rejected_even_with_every_flag_present(self):
+        with self.assertRaises(KicadUnavailable):
+            probe_capability("kicad-cli",
+                             runner=lambda *a, **k: Result(HELP, returncode=1))
+
+    def test_the_rejection_reports_the_exit_status(self):
+        with self.assertRaises(KicadUnavailable) as ctx:
+            probe_capability("kicad-cli",
+                             runner=lambda *a, **k: Result(HELP, returncode=127))
+        self.assertIn("127", str(ctx.exception))
+
+    def test_help_printed_on_stderr_is_still_help(self):
+        # argparse-style tools print usage to stderr. The return code is the
+        # requirement; which stream carried the text is not.
+        probe_capability("kicad-cli",
+                         runner=lambda *a, **k: Result("", stderr=HELP))
+
+    def test_a_successful_probe_missing_a_flag_is_still_rejected(self):
+        stripped = HELP.replace("[--refill-zones] ", "")
+        with self.assertRaises(KicadUnavailable) as ctx:
+            probe_capability("kicad-cli",
+                             runner=lambda *a, **k: Result(stripped))
+        self.assertIn("--refill-zones", str(ctx.exception))

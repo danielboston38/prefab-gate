@@ -1,0 +1,26 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v1",
+    "name": "prefab-gate",
+    "description": "Refuses to produce a fab package from a board that has not passed verification.",
+    "description_full": "prefab-gate runs kicad-cli DRC with zone refill and schematic parity checking, classifies every finding as blocking or cosmetic, and reports whether the board is fit to fabricate.\n\nThe toolbar button checks and reports. It never writes to your project: the check runs against a copy of the board, schematic, project and custom-rules files in a temporary directory, because DRC refills zones and would otherwise rewrite the board open in your editor.\n\nStale zone fills are reported rather than silently repaired, and the dialog always names the file it read and when it was last saved, because unsaved editor changes cannot be detected reliably from a plugin.\n\nExporting a verified fab package - gerbers, drill, CPL and BOM, with a manifest pinning them to the board that was checked - is available from the command line version.",
+    "identifier": "com.github.danielboston38.prefab-gate",
+    "type": "plugin",
+    "author": {
+        "name": "Mark Dymek",
+        "contact": {
+            "web": "https://github.com/danielboston38"
+        }
+    },
+    "license": "MIT",
+    "resources": {
+        "homepage": "https://github.com/danielboston38/prefab-gate"
+    },
+    "tags": ["drc", "fabrication", "verification", "gerber", "design-review"],
+    "versions": [
+        {
+            "version": "0.1.0",
+            "status": "testing",
+            "kicad_version": "8.0"
+        }
+    ]
+}

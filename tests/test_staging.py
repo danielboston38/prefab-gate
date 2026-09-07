@@ -21,7 +21,7 @@ def _read(path):
         return handle.read()
 
 
-def _project(tmp, *, pro=True, dru=True, sheets=()):
+def _project(tmp, *, pro=True, dru=True, sheets=(), libs=False):
     """A believable KiCad project directory. Returns the board path."""
     board = _write(os.path.join(tmp, "demo.kicad_pcb"), "(kicad_pcb)")
     _write(os.path.join(tmp, "demo.kicad_sch"), "(kicad_sch)")
@@ -31,6 +31,16 @@ def _project(tmp, *, pro=True, dru=True, sheets=()):
         _write(os.path.join(tmp, "demo.kicad_pro"), "{}")
     if dru:
         _write(os.path.join(tmp, "demo.kicad_dru"), "(version 1)")
+    if libs:
+        _write(os.path.join(tmp, "fp-lib-table"),
+               '(fp_lib_table\n(lib (name "local") (type "KiCad")'
+               ' (uri "${KIPRJMOD}/Local.pretty") (options "") (descr ""))\n)')
+        _write(os.path.join(tmp, "sym-lib-table"),
+               '(sym_lib_table\n(lib (name "s") (type "KiCad")'
+               ' (uri "${KIPRJMOD}/Local.pretty/s.kicad_sym"))\n)')
+        os.mkdir(os.path.join(tmp, "Local.pretty"))
+        _write(os.path.join(tmp, "Local.pretty", "part.kicad_mod"), "(footprint)")
+        _write(os.path.join(tmp, "Local.pretty", "s.kicad_sym"), "(symbol)")
     return board
 
 
@@ -89,6 +99,56 @@ class CollectTest(unittest.TestCase):
     def test_missing_board_refuses(self):
         with self.assertRaises(staging.StagingError):
             staging.collect("/nonexistent/demo.kicad_pcb")
+
+
+class LibraryTableTest(unittest.TestCase):
+    """Measured regression: staging without the library tables invented two
+    lib_footprint_issues findings against the real project. Cosmetic there, but
+    a project that raises that check to error would block a good board."""
+
+    def test_collects_the_library_tables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _project(tmp, libs=True)
+            names = {os.path.basename(p) for p in staging.collect(board)}
+            self.assertIn("fp-lib-table", names)
+            self.assertIn("sym-lib-table", names)
+
+    def test_follows_project_local_libraries(self):
+        """A copied fp-lib-table pointing at a library that was not copied is
+        worse than no table at all."""
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _project(tmp, libs=True)
+            names = {os.path.basename(p) for p in staging.collect(board)}
+            self.assertIn("part.kicad_mod", names)
+            self.assertIn("s.kicad_sym", names)
+
+    def test_ignores_libraries_outside_the_project(self):
+        """A global library is already on the machine; copying it would be
+        wrong, and a path escaping the project is not ours to follow."""
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _project(tmp)
+            _write(os.path.join(tmp, "fp-lib-table"),
+                   '(fp_lib_table\n(lib (name "esc") (type "KiCad")'
+                   ' (uri "${KIPRJMOD}/../escape.pretty"))\n'
+                   '(lib (name "abs") (type "KiCad") (uri "/opt/kicad/x.pretty"))\n)')
+            collected = staging.collect(board)
+            self.assertFalse([p for p in collected if "escape" in p])
+            self.assertFalse([p for p in collected if p.startswith("/opt")])
+
+    def test_tolerates_a_project_with_no_tables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _project(tmp)
+            self.assertTrue(staging.collect(board))
+
+    def test_library_layout_survives_the_copy(self):
+        """The table says ${KIPRJMOD}/Local.pretty, so the copy must have a
+        Local.pretty — flattening the files into the root would break it."""
+        with tempfile.TemporaryDirectory() as tmp, \
+             tempfile.TemporaryDirectory() as dest:
+            staging.stage(_project(tmp, libs=True), dest)
+            self.assertTrue(os.path.isfile(
+                os.path.join(dest, "Local.pretty", "part.kicad_mod")))
+            self.assertTrue(os.path.isfile(os.path.join(dest, "fp-lib-table")))
 
 
 class StageTest(unittest.TestCase):

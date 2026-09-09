@@ -72,6 +72,51 @@ section is not a section that found nothing, so an absent `violations`,
 `unconnected_items` or (when parity was requested) `schematic_parity` is exit
 `3`, never a clean verdict.
 
+## Trace ampacity
+
+Two checks that run from the board file directly, because they are precisely what
+`kicad-cli` cannot see.
+
+DRC enforces the board-wide `min_track_width`. It does **not** enforce a netclass's
+`track_width` — KiCad treats that as a default for newly routed tracks, not a
+constraint. So a net assigned to a 0.8 mm power netclass can be routed at 0.2 mm and
+DRC passes with zero errors.
+
+**`netclass_width`** *(reported, not blocking)* — a net routed narrower than the
+netclass it was assigned to. Non-blocking on purpose: a short neck-down at a pad is
+normal and legitimate, and blocking on width alone would fire on nearly every board.
+
+**`fuse_trace_ordering`** *(blocking)* — the invariant that actually matters on a power
+input:
+
+> The current that damages the narrowest run on a fused net must **exceed** the current
+> at which the fuse is guaranteed to trip.
+
+A fuse protecting a trace that fails before it does is not protecting anything. The
+check reads the trip current from the fuse footprint's `Spec` property (e.g.
+`IH 2.0 A / IT 3.8 A`) and warns, without blocking, when it cannot find one rather than
+guessing.
+
+Length matters as much as width, so runs are measured by walking connectivity, and a
+short neck flanked by wider copper is credited with the heat it sheds into that copper
+(`HEAL_MM`, calibrated against a distributed electrothermal model). Without that term
+the check cannot tell a hairline 9 mm run from the 0.7 mm neck-down at a pad, and flags
+both — which is how a gate gets ignored.
+
+Skip both with `--no-ampacity`.
+
+### Why this exists
+
+A shipped board reached its polyfuse through 9.06 mm of 0.2 mm trace. The net had been
+left out of the power netclass's name patterns — the patterns were `/5V*`, `GND*` and
+`VBUS`, and the net was called `/raw_5v` — so the highest-current net on the board
+silently inherited the 0.2 mm default and the router obeyed. DRC, ERC and net-assignment
+checking all passed. The trace was damaged at 2.2 A; the fuse was not guaranteed to trip
+until 3.8 A.
+
+Run against that board, this check blocks on `/raw_5v` and passes the corrected
+revision.
+
 ## Exit codes
 
 - `0` — clean (and, for `package`, packaged)

@@ -94,6 +94,33 @@ class BuildTest(unittest.TestCase):
         for tag in self.packed.get("tags", []):
             self.assertRegex(tag, r"^[a-z][-a-z0-9]{0,48}[a-z0-9]$")
 
+    def test_every_entry_carries_a_pinned_timestamp(self):
+        """writestr() stamps the build time and write() copies each file's
+        mtime, so without pinning, the same source tree hashes differently on
+        every build."""
+        with zipfile.ZipFile(self.archive) as zf:
+            stamps = {i.date_time for i in zf.infolist()}
+        self.assertEqual({build_pcm.ZIP_EPOCH}, stamps)
+
+    def test_the_archive_is_byte_reproducible(self):
+        """Two builds of one source tree must hash identically, or the
+        published sha256 cannot be checked by rebuilding and any stray rebuild
+        between hashing and uploading silently invalidates the metadata.
+
+        Perturbing an mtime rather than sleeping keeps this deterministic:
+        zip timestamps have two-second resolution, so back-to-back builds hid
+        the drift this guards against."""
+        victim = os.path.join(REPO, "kicad", "plugin", "action.py")
+        before = os.stat(victim)
+        try:
+            os.utime(victim, (before.st_atime - 86400, before.st_mtime - 86400))
+            with tempfile.TemporaryDirectory() as again:
+                second, _ = build_pcm.build(REPO, again)
+                with open(self.archive, "rb") as a, open(second, "rb") as b:
+                    self.assertEqual(a.read(), b.read())
+        finally:
+            os.utime(victim, (before.st_atime, before.st_mtime))
+
     def test_no_pycache_is_shipped(self):
         self.assertFalse([n for n in self.names if "__pycache__" in n])
         self.assertFalse([n for n in self.names if n.endswith(".pyc")])

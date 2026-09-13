@@ -18,6 +18,24 @@ import os
 import zipfile
 
 
+# The zip format's own epoch. Pinning every entry to it is what makes the
+# archive byte-reproducible: writestr() otherwise stamps metadata.json with the
+# build time and write() copies each source file's mtime, so one unchanged tree
+# produced a different sha256 on every build. That matters because the sha256
+# in the submission describes one exact artifact — an unnoticed rebuild between
+# hashing and uploading silently invalidates it, and nobody can check the
+# published package by building it themselves.
+ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+
+
+def _add(zf, arcname, data, mode=0o644):
+    """Write one entry at the pinned timestamp."""
+    info = zipfile.ZipInfo(arcname, date_time=ZIP_EPOCH)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = (mode & 0xFFFF) << 16
+    zf.writestr(info, data)
+
+
 def _files(root):
     """Every shippable file under root. Bytecode is build output, not source."""
     for base, dirs, names in os.walk(root):
@@ -47,19 +65,23 @@ def build(repo_root, out_dir):
 
     install_size = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("metadata.json", json.dumps(metadata, indent=4))
+        _add(zf, "metadata.json", json.dumps(metadata, indent=4))
 
         for source_root in (os.path.join(kicad, "plugin"),
                             os.path.join(repo_root, "scripts")):
             for path in _files(source_root):
                 arcname = "plugins/" + os.path.relpath(
                     path, source_root).replace(os.sep, "/")
-                zf.write(path, arcname)
-                install_size += os.path.getsize(path)
+                with open(path, "rb") as handle:
+                    payload = handle.read()
+                _add(zf, arcname, payload)
+                install_size += len(payload)
 
         icon = os.path.join(kicad, "icon.png")
-        zf.write(icon, "resources/icon.png")
-        install_size += os.path.getsize(icon)
+        with open(icon, "rb") as handle:
+            payload = handle.read()
+        _add(zf, "resources/icon.png", payload)
+        install_size += len(payload)
 
     submission = json.loads(json.dumps(metadata))
     submission["versions"][0].update({

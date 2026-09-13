@@ -94,6 +94,16 @@ class BuildTest(unittest.TestCase):
         for tag in self.packed.get("tags", []):
             self.assertRegex(tag, r"^[a-z][-a-z0-9]{0,48}[a-z0-9]$")
 
+    def test_install_size_matches_kicads_rule(self):
+        """KiCad recomputes install_size from the archive as the sum of every
+        entry's uncompressed size, metadata.json included, and allows 1024
+        bytes of deviation. Accumulating payload lengths during the build
+        omitted metadata.json and failed their validator by 1786 bytes."""
+        with zipfile.ZipFile(self.archive) as zf:
+            expected = sum(e.file_size for e in zf.infolist() if not e.is_dir())
+        self.assertEqual(expected,
+                         self.submission["versions"][0]["install_size"])
+
     def test_every_entry_carries_a_pinned_timestamp(self):
         """writestr() stamps the build time and write() copies each file's
         mtime, so without pinning, the same source tree hashes differently on

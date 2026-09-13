@@ -63,7 +63,6 @@ def build(repo_root, out_dir):
     version = metadata["versions"][0]["version"]
     archive = os.path.join(out_dir, f"prefab-gate-{version}-pcm.zip")
 
-    install_size = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         _add(zf, "metadata.json", json.dumps(metadata, indent=4))
 
@@ -75,13 +74,20 @@ def build(repo_root, out_dir):
                 with open(path, "rb") as handle:
                     payload = handle.read()
                 _add(zf, arcname, payload)
-                install_size += len(payload)
 
         icon = os.path.join(kicad, "icon.png")
         with open(icon, "rb") as handle:
             payload = handle.read()
         _add(zf, "resources/icon.png", payload)
-        install_size += len(payload)
+
+    # KiCad's validator recomputes install_size from the archive as the sum of
+    # every entry's uncompressed size, metadata.json included, and allows only
+    # 1024 bytes of deviation. Deriving it from the finished archive instead of
+    # accumulating payload lengths keeps our definition from drifting out of
+    # theirs: the hand-rolled sum left out metadata.json and failed validation
+    # by 1786 bytes.
+    with zipfile.ZipFile(archive) as zf:
+        install_size = sum(e.file_size for e in zf.infolist() if not e.is_dir())
 
     submission = json.loads(json.dumps(metadata))
     submission["versions"][0].update({

@@ -11,6 +11,12 @@
             "web": "https://github.com/danielboston38"
         }
     },
+    "maintainer": {
+        "name": "Mark Dymek",
+        "contact": {
+            "email": "mark@dymek.me"
+        }
+    },
     "license": "MIT",
     "resources": {
         "homepage": "https://github.com/danielboston38/prefab-gate"

@@ -190,6 +190,41 @@ With no `pad_direction` section, nothing is checked. Skip the rules with
 `--no-pad-direction`. The KiCad plugin stages `prefab-gate.json`, so the toolbar button
 applies the same rules.
 
+## Pad position
+
+A board that plugs onto another board's header has to put every pad over the pin that
+goes into it. Pad direction catches a part turned round, but not one shifted by a pitch,
+and a part can sit a pitch off and still pass DRC and parity. The board file cannot say
+where the mating header is, so you state it in `prefab-gate.json`: where each pad must
+be, and how far off it may be, in millimetres:
+
+```json
+{"pad_position": {
+  "J1": {"tolerance": 0.1,
+         "pads": {"1": [48.26, 31.75], "2": [48.26, 29.21]}}
+}}
+```
+
+Positions are the board file's own coordinates: what the KiCad editor shows with the
+page origin (not a grid or drill origin), x to the right and y down. Bottom-side parts
+are described as KiCad draws them, from the top, as for pad direction. Pads that share a
+number count as one, at their centre. Pads the rule does not name, such as mounting
+holes, are not checked. A script that knows the mating board can write the rule; the
+gate only compares.
+
+**`pad_position`** *(blocking)*: one or more pads are further than `tolerance` from
+where the rule puts them. The finding names the first few, with how far off each is.
+The part is moved, turned or flipped, or its footprint places the pins differently.
+
+**`pad_position_config`** *(blocking)*: a rule that cannot be checked. The causes are a
+reference that is not on the board, a pad that is not on the footprint, a rule without
+`tolerance` and `pads`, a tolerance that is not a number of 0 or more, a rule with no
+pads, a position that is not `[x, y]`, or a file that is not valid JSON.
+
+With no `pad_position` section, nothing is checked. Skip the rules with
+`--no-pad-position`. The KiCad plugin stages `prefab-gate.json`, so the toolbar button
+applies the same rules.
+
 ## Exit codes
 
 - `0` — clean (and, for `package`, packaged)

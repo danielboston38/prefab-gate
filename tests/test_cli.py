@@ -172,6 +172,25 @@ class TestCli(unittest.TestCase):
                         deps=deps(CLEAN))
         self.assertEqual(code, 0)
 
+    def test_pad_position_rules_beside_the_board_are_checked(self):
+        # The fixture board has no footprints, so any pad rule cannot hold.
+        with open("prefab-gate.json", "w") as fh:
+            json.dump({"pad_position": {"J1": {"tolerance": 0.1,
+                                               "pads": {"1": [0, 0]}}}}, fh)
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 2)
+        self.assertIn("pad_position_config", out.getvalue())
+
+    def test_no_pad_position_skips_the_pad_position_rules(self):
+        with open("prefab-gate.json", "w") as fh:
+            json.dump({"pad_position": {"J1": {"tolerance": 0.1,
+                                               "pads": {"1": [0, 0]}}}}, fh)
+        with redirect_stdout(io.StringIO()):
+            code = main(["check", "b.kicad_pcb", "--no-pad-position"],
+                        deps=deps(CLEAN))
+        self.assertEqual(code, 0)
+
     def test_stays_quiet_when_the_board_was_already_filled(self):
         d = deps(CLEAN)
         d["file_hash"] = lambda path: "same"

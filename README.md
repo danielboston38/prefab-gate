@@ -128,7 +128,8 @@ case opening, so the gate cannot work this out alone. You state it in
 {"connector_facing": {"J2": "left", "J3": "left", "USB-C1": "top"}}
 ```
 
-Edges are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad editor.
+Edges are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad editor,
+looking down on the top side. Bottom-side connectors use the same names.
 
 A connector faces the edge that its courtyard runs out past the furthest. A courtyard
 that stops up to 1 mm inside the edge still counts, so a jack mounted flush with a panel
@@ -170,7 +171,10 @@ naming two pads and the way the line from the first to the second must point:
 ```
 
 Directions are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad
-editor. Pads that share a number, such as shield tabs, count as one pad at their centre.
+editor, looking down on the top side. That holds for parts on the bottom side too: you
+describe them as KiCad draws them, not as you see them when you turn the board over, so a
+bottom-side `left` is on your right when you hold the board upside down. Turning on
+KiCad's *Flip Board View* does not change the rules. Pads that share a number, such as shield tabs, count as one pad at their centre.
 Pick two pads in a straight row or column: the pair must be within about 26 degrees of
 an axis to name a direction.
 

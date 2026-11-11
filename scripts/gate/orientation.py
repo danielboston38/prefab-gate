@@ -9,8 +9,11 @@ between them must point::
 
     {"pad_direction": {"J1": {"from": "1", "to": "2", "toward": "right"}}}
 
-Directions are named as the board appears in the KiCad editor: ``left``,
-``right``, ``top`` and ``bottom``. Pads that share a number (shield tabs, say)
+Directions are named as the board appears in the KiCad editor, looking down on
+the top side: ``left``, ``right``, ``top`` and ``bottom``. Bottom-side parts are
+described the same way, not as seen with the board turned over. KiCad stores a
+flipped footprint already mirrored, so its pads need no extra flip here; the
+contract test checks this against kicad-cli. Pads that share a number (shield tabs, say)
 count as one, at their centre.
 
 A pair of pads too close to diagonal names no direction, and is refused rather

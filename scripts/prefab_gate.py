@@ -9,6 +9,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gate.ampacity import check as check_ampacity     # noqa: E402
+from gate.facing import RULES_FILE                     # noqa: E402
+from gate.facing import check as check_facing          # noqa: E402
 from gate.classify import (ReportInvalid, classify,      # noqa: E402
                            validate_report)
 from gate.export import (export_package, locate_schematic,  # noqa: E402
@@ -63,6 +65,8 @@ def _build_parser():
         p.add_argument("--strict", action="store_true")
         p.add_argument("--no-ampacity", action="store_true",
                        help="skip the trace ampacity checks")
+        p.add_argument("--no-facing", action="store_true",
+                       help=f"skip the connector facing rules in {RULES_FILE}")
         p.add_argument("--schematic", default=None, metavar="PATH",
                        help="schematic the BOM is exported from, when it is not "
                             "beside the board under the board's own name. It "
@@ -176,6 +180,12 @@ def _project_for(board):
     return candidate if os.path.exists(candidate) else None
 
 
+def _rules_for(board):
+    """prefab-gate.json beside the board, when there is one."""
+    candidate = os.path.join(os.path.dirname(os.path.abspath(board)), RULES_FILE)
+    return candidate if os.path.exists(candidate) else None
+
+
 def _gate(args, d) -> int:
     cli = d["locate_cli"]()
     d["probe_capability"](cli)
@@ -220,6 +230,11 @@ def _gate(args, d) -> int:
     # quarter of its class width passes DRC with zero errors.
     if not args.no_ampacity:
         for finding in check_ampacity(args.board, _project_for(args.board)):
+            (verdict.blocking if finding.blocking else verdict.cosmetic).append(finding)
+    # Which edge faces the case opening is not in the board file at all, so
+    # this runs only when the project states it.
+    if not args.no_facing:
+        for finding in check_facing(args.board, _rules_for(args.board)):
             (verdict.blocking if finding.blocking else verdict.cosmetic).append(finding)
     _emit(args, verdict)
 

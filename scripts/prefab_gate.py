@@ -12,6 +12,7 @@ from gate.ampacity import check as check_ampacity     # noqa: E402
 from gate.facing import RULES_FILE                     # noqa: E402
 from gate.facing import check as check_facing          # noqa: E402
 from gate.orientation import check as check_orientation  # noqa: E402
+from gate.position import check as check_position      # noqa: E402
 from gate.classify import (ReportInvalid, classify,      # noqa: E402
                            validate_report)
 from gate.export import (export_package, locate_schematic,  # noqa: E402
@@ -70,6 +71,8 @@ def _build_parser():
                        help=f"skip the connector facing rules in {RULES_FILE}")
         p.add_argument("--no-pad-direction", action="store_true",
                        help=f"skip the pad direction rules in {RULES_FILE}")
+        p.add_argument("--no-pad-position", action="store_true",
+                       help=f"skip the pad position rules in {RULES_FILE}")
         p.add_argument("--schematic", default=None, metavar="PATH",
                        help="schematic the BOM is exported from, when it is not "
                             "beside the board under the board's own name. It "
@@ -243,6 +246,11 @@ def _gate(args, d) -> int:
     # where pin 1 of whatever plugs into it will be.
     if not args.no_pad_direction:
         for finding in check_orientation(args.board, _rules_for(args.board)):
+            (verdict.blocking if finding.blocking else verdict.cosmetic).append(finding)
+    # Nor where the pins of a mating board will be: a part turned the right way
+    # can still sit a pitch off.
+    if not args.no_pad_position:
+        for finding in check_position(args.board, _rules_for(args.board)):
             (verdict.blocking if finding.blocking else verdict.cosmetic).append(finding)
     _emit(args, verdict)
 

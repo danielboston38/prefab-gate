@@ -15,8 +15,8 @@ Everything on the list is here because leaving it out changes the verdict:
   *.kicad_sch    schematic parity, every sheet of it
   fp-lib-table   without it the footprint-vs-library checks cannot run, and
   sym-lib-table  kicad-cli reports the missing library as a finding of its own
-  prefab-gate.json  the gate's own rules; without it connector facing and
-                 pad direction are silently skipped
+  prefab-gate.json  the gate's own rules; without it connector facing, pad
+                 direction and pad position are silently skipped
 
 and project-local libraries the tables point at with ${KIPRJMOD}. Dropping the
 tables was measured: it invented two lib_footprint_issues findings that do not

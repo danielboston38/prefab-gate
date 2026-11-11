@@ -114,28 +114,32 @@ def _reference(fp):
     return text[0][2] if text else None
 
 
-def _footprints(tree):
+def footprints(tree):
     return {_reference(fp): fp for fp in _children(tree, "footprint")}
 
 
-def _courtyard(fp):
-    """The courtyard's corners in board coordinates.
+def place(fp, points):
+    """Footprint-local points in board coordinates.
 
-    KiCad stores a back-side footprint's graphics already mirrored, so placing
-    either side is the same rotate-then-translate. Its rotation is
+    KiCad stores a back-side footprint's graphics and pads already mirrored, so
+    placing either side is the same rotate-then-translate. Its rotation is
     counter-clockwise on screen, with y pointing down.
     """
     at = _child(fp, "at")
     x, y = float(at[1]), float(at[2])
     theta = math.radians(float(at[3])) if len(at) > 3 else 0.0
     c, s = math.cos(theta), math.sin(theta)
-    points = []
+    return [(x + lx * c + ly * s, y - lx * s + ly * c) for lx, ly in points]
+
+
+def _courtyard(fp):
+    """The courtyard's corners in board coordinates."""
+    local = []
     for shape in fp:
         if (isinstance(shape, list) and shape and str(shape[0]).startswith("fp_")
                 and _layer(shape).endswith(".CrtYd")):
-            for lx, ly in _shape_points(shape):
-                points.append((x + lx * c + ly * s, y - lx * s + ly * c))
-    return points
+            local.extend(_shape_points(shape))
+    return place(fp, local)
 
 
 def _edge_of(points, outline):
@@ -151,7 +155,7 @@ def _edge_of(points, outline):
 def facing_edge(board_text, reference):
     """The edge the named footprint faces, or None when it reaches no edge."""
     tree = parse(board_text)
-    return _edge_of(_courtyard(_footprints(tree)[reference]), _outline(tree))
+    return _edge_of(_courtyard(footprints(tree)[reference]), _outline(tree))
 
 
 def _config_problem(description, items=()):
@@ -161,14 +165,15 @@ def _config_problem(description, items=()):
                    reason="a facing rule that cannot be checked is not a pass")
 
 
-def _load_rules(rules_path):
+def load_section(rules_path, name):
+    """One section of the rules file, as a dict. Raises OSError or ValueError."""
     with open(rules_path, encoding="utf-8") as f:
         rules = json.load(f)
     if not isinstance(rules, dict):
         raise ValueError("the file must hold a JSON object")
-    section = rules.get("connector_facing", {})
+    section = rules.get(name, {})
     if not isinstance(section, dict):
-        raise ValueError('"connector_facing" must map references to edges')
+        raise ValueError(f'"{name}" must map references to rules')
     return section
 
 
@@ -177,7 +182,7 @@ def check(board_path, rules_path=None):
     if not rules_path:
         return []
     try:
-        wanted = _load_rules(rules_path)
+        wanted = load_section(rules_path, "connector_facing")
     except (OSError, ValueError) as exc:
         return [_config_problem(f"Cannot read the facing rules in {rules_path}: {exc}")]
     if not wanted:
@@ -190,7 +195,7 @@ def check(board_path, rules_path=None):
         return [_config_problem(
             "The board has no Edge.Cuts outline, so no connector can be checked "
             "against an edge.")]
-    footprints = _footprints(tree)
+    placed = footprints(tree)
 
     findings = []
     for ref, edge in sorted(wanted.items()):
@@ -200,11 +205,11 @@ def check(board_path, rules_path=None):
                 f'{ref}: "{edge}" is not an edge. Use one of: {", ".join(EDGES)}.',
                 [ref]))
             continue
-        if ref not in footprints:
+        if ref not in placed:
             findings.append(_config_problem(
                 f"{ref} has a facing rule but is not on the board.", [ref]))
             continue
-        points = _courtyard(footprints[ref])
+        points = _courtyard(placed[ref])
         if not points:
             findings.append(_config_problem(
                 f"{ref} has no courtyard, so the gate cannot tell which way it "

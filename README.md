@@ -117,6 +117,42 @@ until 3.8 A.
 Run against that board, this check blocks on `/raw_5v` and passes the corrected
 revision.
 
+## Connector facing
+
+A right-angle connector can match its datasheet, pass DRC and parity, and still open
+toward the wrong side of the board. The board file does not record which edge faces the
+case opening, so the gate cannot work this out alone. You state it in
+`prefab-gate.json`, beside the board:
+
+```json
+{"connector_facing": {"J2": "left", "J3": "left", "USB-C1": "top"}}
+```
+
+Edges are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad editor.
+
+A connector faces the edge that its courtyard runs out past the furthest. A courtyard
+that stops up to 1 mm inside the edge still counts, so a jack mounted flush with a panel
+is not reported. The edges come from the bounding box of the `Edge.Cuts` outline, which
+is exact for a rectangular board.
+
+**`connector_facing`** *(blocking)*: the connector faces a different edge, or reaches no
+edge at all.
+
+**`connector_facing_config`** *(blocking)*: a rule that cannot be checked. The causes
+are a reference that is not on the board, an unknown edge name, a footprint with no
+courtyard, a board with no outline, or a file that is not valid JSON. A typo in a rule
+must not switch the check off without a word.
+
+With no `prefab-gate.json`, or no `connector_facing` section in it, nothing is checked.
+Skip the rules with `--no-facing`. The KiCad plugin copies `prefab-gate.json` into its
+staged project, so the toolbar button applies the same rules.
+
+### Why this exists
+
+A built board had both RCA jacks facing into the console instead of out through the
+case. The footprint matched the Switchcraft drawing, and the barrels did cross a board
+edge, but it was the wrong edge.
+
 ## Exit codes
 
 - `0` — clean (and, for `package`, packaged)

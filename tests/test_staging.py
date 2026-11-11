@@ -70,6 +70,14 @@ class CollectTest(unittest.TestCase):
             self.assertIn("demo.kicad_pro", names)
             self.assertIn("demo.kicad_dru", names)
 
+    def test_collects_the_facing_rules(self):
+        """Without them the staged check would skip connector facing and pass."""
+        with tempfile.TemporaryDirectory() as tmp:
+            board = _project(tmp)
+            _write(os.path.join(tmp, "prefab-gate.json"), "{}")
+            names = {os.path.basename(p) for p in staging.collect(board)}
+            self.assertIn("prefab-gate.json", names)
+
     def test_tolerates_missing_optional_sidecars(self):
         with tempfile.TemporaryDirectory() as tmp:
             board = _project(tmp, pro=False, dru=False)

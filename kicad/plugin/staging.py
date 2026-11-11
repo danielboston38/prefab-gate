@@ -15,6 +15,8 @@ Everything on the list is here because leaving it out changes the verdict:
   *.kicad_sch    schematic parity, every sheet of it
   fp-lib-table   without it the footprint-vs-library checks cannot run, and
   sym-lib-table  kicad-cli reports the missing library as a finding of its own
+  prefab-gate.json  the gate's own rules; without it connector facing is
+                 silently skipped
 
 and project-local libraries the tables point at with ${KIPRJMOD}. Dropping the
 tables was measured: it invented two lib_footprint_issues findings that do not
@@ -27,6 +29,7 @@ import re
 import shutil
 
 LIB_TABLES = ("fp-lib-table", "sym-lib-table")
+RULES_FILE = "prefab-gate.json"   # the gate's own rules, e.g. connector facing
 
 # Library entries are project-local when their URI is ${KIPRJMOD}-relative.
 # Anything else points outside the project and is left to resolve normally.
@@ -90,6 +93,9 @@ def collect(board_path):
         sidecar = os.path.join(project, stem + extension)
         if os.path.isfile(sidecar):
             files.append(sidecar)
+    rules = os.path.join(project, RULES_FILE)
+    if os.path.isfile(rules):
+        files.append(rules)
     for table in LIB_TABLES:
         table_path = os.path.join(project, table)
         if os.path.isfile(table_path):

@@ -137,6 +137,22 @@ class TestCli(unittest.TestCase):
             main(["check", "b.kicad_pcb"], deps=d)
         self.assertIn("zone fills", out.getvalue())
 
+    def test_facing_rules_beside_the_board_are_checked(self):
+        # The fixture board has no outline, so any facing rule cannot hold.
+        with open("prefab-gate.json", "w") as fh:
+            json.dump({"connector_facing": {"J2": "left"}}, fh)
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 2)
+        self.assertIn("connector_facing_config", out.getvalue())
+
+    def test_no_facing_skips_the_facing_rules(self):
+        with open("prefab-gate.json", "w") as fh:
+            json.dump({"connector_facing": {"J2": "left"}}, fh)
+        with redirect_stdout(io.StringIO()):
+            code = main(["check", "b.kicad_pcb", "--no-facing"], deps=deps(CLEAN))
+        self.assertEqual(code, 0)
+
     def test_stays_quiet_when_the_board_was_already_filled(self):
         d = deps(CLEAN)
         d["file_hash"] = lambda path: "same"

@@ -153,6 +153,25 @@ class TestCli(unittest.TestCase):
             code = main(["check", "b.kicad_pcb", "--no-facing"], deps=deps(CLEAN))
         self.assertEqual(code, 0)
 
+    def test_pad_direction_rules_beside_the_board_are_checked(self):
+        # The fixture board has no footprints, so any pad rule cannot hold.
+        with open("prefab-gate.json", "w") as fh:
+            json.dump({"pad_direction": {"J1": {"from": "1", "to": "2",
+                                                "toward": "right"}}}, fh)
+        with redirect_stdout(io.StringIO()) as out:
+            code = main(["check", "b.kicad_pcb"], deps=deps(CLEAN))
+        self.assertEqual(code, 2)
+        self.assertIn("pad_direction_config", out.getvalue())
+
+    def test_no_pad_direction_skips_the_pad_direction_rules(self):
+        with open("prefab-gate.json", "w") as fh:
+            json.dump({"pad_direction": {"J1": {"from": "1", "to": "2",
+                                                "toward": "right"}}}, fh)
+        with redirect_stdout(io.StringIO()):
+            code = main(["check", "b.kicad_pcb", "--no-pad-direction"],
+                        deps=deps(CLEAN))
+        self.assertEqual(code, 0)
+
     def test_stays_quiet_when_the_board_was_already_filled(self):
         d = deps(CLEAN)
         d["file_hash"] = lambda path: "same"

@@ -128,7 +128,8 @@ case opening, so the gate cannot work this out alone. You state it in
 {"connector_facing": {"J2": "left", "J3": "left", "USB-C1": "top"}}
 ```
 
-Edges are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad editor.
+Edges are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad editor,
+looking down on the top side. Bottom-side connectors use the same names.
 
 A connector faces the edge that its courtyard runs out past the furthest. A courtyard
 that stops up to 1 mm inside the edge still counts, so a jack mounted flush with a panel
@@ -152,6 +153,42 @@ staged project, so the toolbar button applies the same rules.
 A built board had both RCA jacks facing into the console instead of out through the
 case. The footprint matched the Switchcraft drawing, and the barrels did cross a board
 edge, but it was the wrong edge.
+
+## Pad direction
+
+A polarised part can be turned 180 degrees, or drawn with a footprint that numbers its
+pins the other way, and still pass DRC and parity: every net lands on the pad it should.
+It is only wrong when the cable, mating board or case puts its pin 1 on the other side.
+Pin 1 on a connector has to be pin 1 on whatever it connects to, and the board file
+cannot say where that is. You state it in `prefab-gate.json`, beside the board, by
+naming two pads and the way the line from the first to the second must point:
+
+```json
+{"pad_direction": {
+  "J1": {"from": "1", "to": "2", "toward": "right"},
+  "J4": {"from": "1", "to": "10", "toward": "bottom"}
+}}
+```
+
+Directions are `left`, `right`, `top` and `bottom`, as the board appears in the KiCad
+editor, looking down on the top side. That holds for parts on the bottom side too: you
+describe them as KiCad draws them, not as you see them when you turn the board over, so a
+bottom-side `left` is on your right when you hold the board upside down. Turning on
+KiCad's *Flip Board View* does not change the rules. Pads that share a number, such as shield tabs, count as one pad at their centre.
+Pick two pads in a straight row or column: the pair must be within about 26 degrees of
+an axis to name a direction.
+
+**`pad_direction`** *(blocking)*: the pads point the other way, or along the other
+axis. The part is rotated or mirrored, or its footprint numbers the pins differently.
+
+**`pad_direction_config`** *(blocking)*: a rule that cannot be checked. The causes are a
+reference that is not on the board, a pad that is not on the footprint, an unknown
+direction, a rule without `from`, `to` and `toward`, a pair of pads that is diagonal or
+on top of each other, or a file that is not valid JSON.
+
+With no `pad_direction` section, nothing is checked. Skip the rules with
+`--no-pad-direction`. The KiCad plugin stages `prefab-gate.json`, so the toolbar button
+applies the same rules.
 
 ## Exit codes
 

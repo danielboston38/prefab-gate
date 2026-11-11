@@ -13,13 +13,16 @@ failure mode a green unit suite cannot report.
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
 
 from gate.classify import ReportInvalid, validate_report
+from gate.facing import footprints, parse
 from gate.kicad import (PARITY_RAN, KicadUnavailable, locate_cli,
                         probe_capability, run_drc)
+from gate.orientation import _pad_centres
 
 # Minimal but real. A fixture pinned to the project's own board would test the
 # board; these tests are about the tool.
@@ -164,3 +167,57 @@ class TestTheProbeAgreesWithTheInstalledCli(unittest.TestCase):
         # renamed the doubles would keep accepting it and only real runs would
         # break.
         probe_capability(CLI)
+
+
+def _part(ref, side, rot):
+    """A part with two pads off-centre and off-axis, so a wrong mirror, a wrong
+    rotation sense or a wrong origin each move them somewhere else."""
+    pads = "".join(
+        f'\t\t(pad "{n}" thru_hole circle (at {x} {y} {rot}) (size 1.7 1.7) '
+        f'(drill 1) (layers "*.Cu" "*.Mask"))\n'
+        for n, x, y in (("1", -1.27, 0.5), ("2", 2.54, -1.0)))
+    return (f'\t(footprint "Test:Part" (layer "{side}.Cu") (at 50 40 {rot})\n'
+            f'\t\t(property "Reference" "{ref}" (at 0 0 0) (layer "{side}.SilkS"))\n'
+            f'{pads}\t)\n')
+
+
+@unittest.skipIf(CLI is None, "no kicad-cli installed")
+class TestPadPlacementMatchesKicad(unittest.TestCase):
+    """The pad direction check places pads itself. kicad-cli's IPC-D-356
+    netlist says where KiCad puts them. A back-side part is where the two could
+    part company: KiCad stores a flipped footprint already mirrored, and the
+    check relies on that, so that left and right on a bottom-side part mean
+    left and right as seen in the KiCad editor, from the top.
+    """
+
+    def kicad_pads(self, board_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            board = os.path.join(tmp, "board.kicad_pcb")
+            with open(board, "w") as fh:
+                fh.write(board_text)
+            out = os.path.join(tmp, "board.d356")
+            subprocess.run([CLI, "pcb", "export", "ipcd356", "-o", out, board],
+                           capture_output=True, text=True, check=True)
+            with open(out) as fh:
+                lines = fh.read().splitlines()
+        pads = {}
+        for line in lines:
+            # Units are 0.0001 inch, and IPC-D-356's y axis points up.
+            m = re.match(r"3[12]7\S*\s+(\S+)\s+-(\S+)\s.*?X([+-]\d+)Y([+-]\d+)", line)
+            if m:
+                pads[(m[1], m[2])] = (int(m[3]) * 0.00254, -int(m[4]) * 0.00254)
+        return pads
+
+    def test_front_and_back_pads_land_where_kicad_puts_them(self):
+        parts = [("F0", "F", 0), ("F1", "F", 30), ("B0", "B", 0), ("B1", "B", 30)]
+        board_text = BOARD.replace(
+            "\t(net 0 \"\")\n",
+            "\t(net 0 \"\")\n" + "".join(_part(*p) for p in parts))
+        kicad = self.kicad_pads(board_text)
+        ours = footprints(parse(board_text))
+        for ref, _, _ in parts:
+            for number, (x, y) in _pad_centres(ours[ref]).items():
+                kx, ky = kicad[(ref, number)]
+                with self.subTest(ref=ref, pad=number):
+                    self.assertAlmostEqual(x, kx, delta=0.01)
+                    self.assertAlmostEqual(y, ky, delta=0.01)

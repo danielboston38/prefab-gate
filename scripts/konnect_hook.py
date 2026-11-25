@@ -10,11 +10,13 @@ is that history. It only reports; it never blocks a call, and always exits 0.
 """
 import json
 import os
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from schematic_change_check import diff, kicad_export, snapshot   # noqa: E402
+from schematic_change_check import (default_store, diff, kicad_export,  # noqa: E402
+                                    snapshot)
 
 SHEET = ".kicad_sch"
 
@@ -31,10 +33,18 @@ def _could_not_run(error: Exception) -> dict:
     return {"systemMessage": f"schematic change check could not run: {error}"}
 
 
-def main(phase: str, data: dict, store: str | None = None, export=kicad_export) -> dict | None:
+def _store(schematic: str, data: dict, base: str | None) -> str:
+    """One snapshot per tool call, so calls running side by side do not mix."""
+    root = base or default_store(schematic)
+    return os.path.join(root, str(data.get("tool_use_id") or "call"))
+
+
+def main(phase: str, data: dict, store: str | None = None, export=kicad_export,
+         base: str | None = None) -> dict | None:
     schematic = _schematic(data.get("tool_input") or {})
     if schematic is None:
         return None
+    store = store or _store(schematic, data, base)
     try:
         if phase == "pre":
             snapshot(schematic, store)
@@ -42,13 +52,16 @@ def main(phase: str, data: dict, store: str | None = None, export=kicad_export) 
         _, lines = diff(schematic, store, export)
     except Exception as e:   # a hook must never break the tool call
         return _could_not_run(e)
+    finally:
+        if phase != "pre":
+            shutil.rmtree(store, ignore_errors=True)
     if lines == ["no change"]:
         return None
     name = os.path.basename(schematic)
     text = "\n".join(lines)
     return {"systemMessage": f"Schematic changes ({name}):\n{text}",
             "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
+                "hookEventName": data.get("hook_event_name") or "PostToolUse",
                 "additionalContext": f"Schematic changes from {data.get('tool_name')} "
                                      f"({name}):\n{text}"}}
 

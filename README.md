@@ -250,7 +250,9 @@ printed), `3` when it could not run (no snapshot, kicad-cli missing or failing).
 ### The Konnect hook
 
 The plugin's `hooks/hooks.json` runs `scripts/konnect_hook.py` before and after
-every `mcp__konnect__*` tool call that names a `.kicad_sch`. The changes go to
+every `mcp__konnect__*` tool call that names a `.kicad_sch`, including calls that
+fail (`PostToolUseFailure`). Each call gets its own snapshot of the whole project
+(every sheet, in any subfolder), removed when the call ends. The changes go to
 the user and to Claude. It only reports: it never blocks a call and always exits
 `0`; if it cannot run, it says so.
 

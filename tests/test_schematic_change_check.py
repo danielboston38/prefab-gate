@@ -95,6 +95,34 @@ class Diff(unittest.TestCase):
             scc.diff(p.top, p.store, FakeExport())
 
 
+class Subfolders(unittest.TestCase):
+    def project(self):
+        p = Project(self, ("adapter.kicad_sch",))
+        p.write("adapter.kicad_pro", "{}")
+        os.mkdir(os.path.join(p.dir, "sheets"))
+        p.write("sheets/power.kicad_sch", "(kicad_sch R5 10k)")
+        return p
+
+    def test_change_in_subfolder_sheet_is_seen(self):
+        p = self.project()
+        scc.snapshot(p.top, p.store)
+        p.write("sheets/power.kicad_sch", "(kicad_sch R5 4k7)")
+        self.assertEqual(scc.changed_files(p.top, p.store),
+                         [os.path.join("sheets", "power.kicad_sch")])
+
+    def test_subsheet_path_compares_the_whole_project(self):
+        p = self.project()
+        sub = os.path.join(p.dir, "sheets", "power.kicad_sch")
+        export = FakeExport()
+        scc.snapshot(sub, p.store)
+        self.assertTrue(os.path.exists(os.path.join(p.store, "adapter.kicad_sch")))
+        p.write("sheets/power.kicad_sch", "(kicad_sch R5 4k7)")
+        p.write("adapter.kicad_sch", "(kicad_sch R5 4k7)")
+        self.assertEqual(scc.diff(sub, p.store, export)[0], 2)
+        self.assertEqual([os.path.basename(c) for c in export.calls],
+                         ["adapter.kicad_sch", "adapter.kicad_sch"])
+
+
 class Cli(unittest.TestCase):
     def run_cli(self, *args):
         out, err = io.StringIO(), io.StringIO()

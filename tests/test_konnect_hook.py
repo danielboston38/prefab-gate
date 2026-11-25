@@ -69,6 +69,31 @@ class Hook(unittest.TestCase):
         out = konnect_hook.main("post", data, store=self.p.store, export=broken)
         self.assertTrue(out["systemMessage"].startswith("schematic change check could not run:"))
 
+    def test_calls_in_parallel_keep_their_own_snapshots(self):
+        a = dict(call("edit_schematic_component", schematic=self.p.top), tool_use_id="a")
+        b = dict(call("list_schematic_nets", schematic=self.p.top), tool_use_id="b")
+        konnect_hook.main("pre", a, export=self.export, base=self.p.store)
+        self.p.write("top.kicad_sch", "(kicad_sch R5 4k7)")   # call A writes
+        konnect_hook.main("pre", b, export=self.export, base=self.p.store)
+        out_a = konnect_hook.main("post", a, export=self.export, base=self.p.store)
+        out_b = konnect_hook.main("post", b, export=self.export, base=self.p.store)
+        self.assertIn("R5 value 10k -> 4k7", out_a["systemMessage"])
+        self.assertIsNone(out_b)
+
+    def test_post_removes_its_snapshot(self):
+        a = dict(call("list_schematic_nets", schematic=self.p.top), tool_use_id="a")
+        konnect_hook.main("pre", a, export=self.export, base=self.p.store)
+        konnect_hook.main("post", a, export=self.export, base=self.p.store)
+        self.assertEqual(os.listdir(self.p.store), [])
+
+    def test_failed_call_reports_under_its_own_event(self):
+        data = dict(call("edit_schematic_component", schematic=self.p.top),
+                    hook_event_name="PostToolUseFailure")
+        self.run_hook("pre", data)
+        self.p.write("top.kicad_sch", "(kicad_sch R5 4k7)")
+        out = self.run_hook("post", data)
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PostToolUseFailure")
+
     def test_post_without_snapshot_says_so(self):
         out = self.run_hook("post", call("edit_schematic_component", schematic=self.p.top))
         self.assertTrue(out["systemMessage"].startswith("schematic change check could not run:"))

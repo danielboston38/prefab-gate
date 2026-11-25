@@ -5,7 +5,11 @@
       {
         "matcher": "mcp__konnect__.*",
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" pre", "timeout": 30}
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" pre",
+            "timeout": 30
+          }
         ]
       }
     ],
@@ -13,7 +17,23 @@
       {
         "matcher": "mcp__konnect__.*",
         "hooks": [
-          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" post", "timeout": 60}
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" post",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "mcp__konnect__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" post",
+            "timeout": 60
+          }
         ]
       }
     ]

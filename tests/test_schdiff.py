@@ -1,6 +1,6 @@
 import unittest
 
-from gate.schdiff import compare, read_netlist
+from gate.schdiff import DuplicateReference, compare, read_netlist
 
 
 def netlist(parts, nets):
@@ -92,6 +92,46 @@ class Compare(unittest.TestCase):
                 "Net-(R5-Pad2)": [("R5", "2"), ("U4", "17"), ("U4", "10")]}
         self.assertEqual(self.changes(PARTS, nets),
                          ["U4.10: GND -> Net-(R5-Pad2)"])
+
+
+SPLIT_PARTS = [("R1", "1k", "R"), ("C1", "1n", "C"), ("R2", "1k", "R"), ("C2", "1n", "C")]
+JOINED = {"Net-(R1-Pad1)": [("R1", "1"), ("C1", "1"), ("R2", "1"), ("C2", "1")]}
+APART = {"Net-(R1-Pad1)": [("R1", "1"), ("C1", "1")],
+         "Net-(C2-Pad1)": [("R2", "1"), ("C2", "1")]}
+
+
+class SplitAndMerge(unittest.TestCase):
+    def changes(self, old_nets, new_nets):
+        return compare(read_netlist(netlist(SPLIT_PARTS, old_nets)),
+                       read_netlist(netlist(SPLIT_PARTS, new_nets)))
+
+    def test_split_of_made_up_net_is_reported(self):
+        got = self.changes(JOINED, APART)
+        self.assertEqual(len(got), 2, got)
+        self.assertTrue(all("-> Net-(C2-Pad1)" in line for line in got), got)
+
+    def test_merge_of_made_up_nets_is_reported(self):
+        self.assertEqual(len(self.changes(APART, JOINED)), 2)
+
+    def test_sheet_path_made_up_names_are_matched_by_members(self):
+        old = {"/sub/Net-(R1-Pad1)": APART["Net-(R1-Pad1)"],
+               "/sub/Net-(C2-Pad1)": APART["Net-(C2-Pad1)"]}
+        new = {"/sub/Net-(C1-Pad1)": APART["Net-(R1-Pad1)"],
+               "/sub/Net-(R2-Pad1)": APART["Net-(C2-Pad1)"]}
+        self.assertEqual(self.changes(old, new), [])
+
+
+class Duplicates(unittest.TestCase):
+    def test_duplicate_reference_refuses(self):
+        text = netlist([("R?", "1k", "R"), ("R?", "2k", "R")], {"GND": [("R?", "1")]})
+        with self.assertRaises(DuplicateReference):
+            read_netlist(text)
+
+    def test_duplicate_pin_refuses(self):
+        text = netlist([("R?", "1k", "R")],
+                       {"GND": [("R?", "1")], "VCC": [("R?", "1")]})
+        with self.assertRaises(DuplicateReference):
+            read_netlist(text)
 
 
 if __name__ == "__main__":

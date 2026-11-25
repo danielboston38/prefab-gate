@@ -76,6 +76,14 @@ published. Editing either mid-run gets you exit `3` and no package, rather than
 a package describing a board nothing verified. The manifest carries
 `checked_sha256` beside `sha256` for both so a reader can confirm it.
 
+## Schematic changes from Konnect
+
+After a Konnect call that names a schematic, a hook prints what it changed
+electrically ("Schematic changes from …"). Compare that list with what was
+asked. Tell the user about any change they did not ask for, and do not build on
+it until they decide. "could not run" means the change is unchecked: run
+`scripts/schematic_change_check.py diff` yourself or say so.
+
 ## What it does not do
 
 It does not replace design review. It checks that the board you have is

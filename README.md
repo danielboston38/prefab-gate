@@ -225,6 +225,44 @@ With no `pad_position` section, nothing is checked. Skip the rules with
 `--no-pad-position`. The KiCad plugin stages `prefab-gate.json`, so the toolbar button
 applies the same rules.
 
+## Schematic change check
+
+Says what changed electrically in a schematic since a snapshot: parts added,
+removed or renamed, value, footprint or symbol changes, and pins that moved to
+another net.
+
+    python3 scripts/schematic_change_check.py snapshot <file.kicad_sch> [--store DIR]
+    python3 scripts/schematic_change_check.py diff     <file.kicad_sch> [--store DIR]
+
+`snapshot` copies every `.kicad_sch` (and the `.kicad_pro` and
+`sym-lib-table`) in the schematic's folder to `--store`, by default
+`~/.cache/prefab-gate/snapshots/<folder hash>/`; nothing is written in the
+project. `diff` compares file hashes first and runs kicad-cli only when a sheet
+changed. It then exports a netlist from the snapshot and from the live files and
+compares them by connectivity: a net KiCad named itself (`Net-(R1-Pad2)`) is
+matched by its pins, so renaming a part prints one `rename` line, not a change on
+every net it touches. A file that changed without an electrical change prints
+`file changed, connectivity unchanged`.
+
+`diff` exits `0` for no electrical change, `2` when there is one (each change is
+printed), `3` when it could not run (no snapshot, kicad-cli missing or failing).
+
+### The Konnect hook
+
+The plugin's `hooks/hooks.json` runs `scripts/konnect_hook.py` before and after
+every `mcp__konnect__*` tool call that names a `.kicad_sch`. The changes go to
+the user and to Claude. It only reports: it never blocks a call and always exits
+`0`; if it cannot run, it says so.
+
+### Why this exists
+
+Konnect edits boards through KiCad's IPC API, so those edits show in KiCad's
+undo history. KiCad has no IPC API for schematics, so Konnect rewrites the
+`.kicad_sch` file with its own code; those edits show nowhere. This check is
+that history. Board edits are not covered: they live in the open editor until
+it saves. KiCad 11 is expected to add a diff command to kicad-cli; `diff` is the
+one place to switch to it.
+
 ## Exit codes
 
 - `0` — clean (and, for `package`, packaged)

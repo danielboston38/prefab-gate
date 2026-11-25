@@ -1,0 +1,21 @@
+{
+  "description": "Report what each Konnect MCP call changed in a KiCad schematic",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__konnect__.*",
+        "hooks": [
+          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" pre", "timeout": 30}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__konnect__.*",
+        "hooks": [
+          {"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/konnect_hook.py\" post", "timeout": 60}
+        ]
+      }
+    ]
+  }
+}
